@@ -1,68 +1,58 @@
-"""Defaults of the numbers `recommend` and `describe` take in `params` (OctantSpecs contracts/, contract 1 (OctantCompass/OctantHarvest to OctantVector)).
+"""`recommend` と `describe` が `params` で受け取る数の既定値（契約1）。
 
-OctantCompass passes the values from the settings JSON; a key it leaves out uses the default here. Unknown keys are
-ignored. Where OctantSpecs already gives a default, the value is that one and the comment names the table:
-  difficulty-fit.md, 設定                 the difficulty keys
-The others are provisional values of this runtime, not decided in OctantSpecs.
+`params` で省いたキーはここの既定値を使い、知らないキーは無視する。難易度のキーは OctantSpecs の既定値（契約1 の
+params のスキーマの `x-defaultIn`）を使う。「仮」と書いたものは、この推薦側の仮の値。
 """
 
 DEFAULTS = {
-    "minViewWeight": 0.5,          # share of the view weight a candidate must have vectors for (OctantSpecs law 3.1;
-                                   # also what the development search keeps, cli.py)
-    "includeKnown": False,         # provisional: also recommend maps the player already played, liked or voted on
-    "recentPlays": 200,            # provisional: plays that count as "recent" for the genre entry (OctantSpecs Q2: undecided)
-    "genreTopShare": 0.1,          # provisional: share of maps, closest to the word, kept by a genre filter
-    "narrowTopMaps": 300,          # provisional: maps kept by `narrow` before ranking by `weights`
-    "narrowWiden": 3,              # provisional: narrowTopMaps is multiplied by this while fewer than `count` are left (2026-10-13)
-    "seedTasteWeight": 0.0,        # provisional: how much the player's taste is mixed into a seeded recommendation
-    "chainEvery": 0,               # provisional: with a seed, move the seed after every this many maps ("連想型",
-                                   # OctantSpecs open.md P4); 0: never
-    "chainFirstWeight": 0.0,       # provisional: share of the first seed's score kept after the seed moved (P6)
-    "mapsPerSong": 1,              # provisional: maps of one song (other mappers' maps of it) in a list; 0: no limit
-    "mapsPerArtist": 3,            # maps of one artist (the same artist set) in a list; 0: no limit (OctantSpecs law 3.4, 2026-10-12)
-    "sameSongCosine": 0.9,         # provisional: mean music-view cosine from which two maps are the same song
-    "mixPriorDrafts": 20,          # provisional: in a mixed hand, drafts' worth of the hands' common keep rate that a
-                                   # hand's own keep rate is shrunk towards (n0 of OctantSpecs
-                                   # personal-data-overfitting.md, 個人化の強さ; 20 to 50 lost least in the forward test
-                                   # of spikes/2026-10-29-preset-reactions)
-    # difficulty (difficulty-fit.md, 設定)
-    "features": {"nps": 1.0, "njs": 1.0},  # chart features and their weights for the distance
-    "k": 5,                        # nearest strong charts averaged into a distance
-    "normalPercentile": 80,        # cleared charts' distances up to this percentile are "normal"
-    "strongRecentClears": 200,     # most recent clears that form the strong set
-    "minClears": 50,               # fewer clears in a play style: no difficulty fitting for it (section 6)
-    "minFailsForCurve": 30,        # fewer fails: no clear-chance curve; fewer since the strong set's oldest clear: no
-                                   # weak directions
-    "directionShrinkPlays": 100,   # provisional: plays (clears and fails) at which the learned weak-direction weights
-                                   # and the configured ones count half each (n0 of OctantSpecs
-                                   # personal-data-overfitting.md, 個人化の強さ)
-    "toleranceSd": 1.0,            # allowed distance from the target, in standard deviations of the cleared distances
-    "toleranceMaxSd": 2.0,         # widened up to this when too few candidates are left
-    "penaltyWeight": 1.0,          # weight of the distance-from-target penalty (`beta`)
-    "challengeClearChance": 0.5,   # clear chance the challenge aim targets
-    "warmupScale": 0.5,            # warmup target = this x the normal target
-    # ceiling (足切り): an upper limit the player switches on, apart from the aims (2026-10-25)
-    "ceiling": False,              # drop the charts above the player's ceiling in any of ceilingFeatures, or
-                                   # below their floor in any of floorFeatures
-    "ceilingFeatures": ["pass"],   # provisional: chart metrics the ceiling is set in (Pass predicted one player's
-                                   # fails best; Movement added next to nothing, and notes on screen at once, nps x
-                                   # jump duration, dropped charts the player wanted unless set so high that it
-                                   # dropped none, 2026-10-25); a metric the DB lacks is not used
-    "ceilingPercentile": 97,       # provisional: the ceiling is this percentile of the player's recent clears (90
-                                   # dropped half the charts in play, 2026-10-25)
-    "floorFeatures": [],           # chart metrics the floor is set in (an NJS floor predicted fails less well
-                                   # than notes on screen at once and dropped more, 2026-10-25)
-    "floorBelowMedian": 3.0,       # provisional: the floor is the recent clears' median less this
-    "ceilingMinClears": 20,        # provisional: fewer clears in a play style (own plain ones, then PlayerData's up
-                                   # to strongRecentClears): no ceiling or floor there
+    "minViewWeight": 0.5,          # 候補がベクトルを持つべきビューの重みの割合（OctantSpecs 法 3.1）
+    "includeKnown": False,         # 仮: プレイヤーがもう遊んだ、お気に入りにした、投票したマップも推薦する
+    "recentPlays": 200,            # 仮: ジャンルの入口で「最近」と数えるプレイの数
+    "genreTopShare": 0.1,          # 仮: ジャンルの絞り込みで残す、語に一番近いマップの割合
+    "narrowTopMaps": 300,          # 仮: `weights` で並べる前に `narrow` で残すマップ数
+    "narrowWiden": 3,              # 仮: 残りが `count` より少ないあいだ、narrowTopMaps にこれを掛ける
+    "seedTasteWeight": 0.0,        # 仮: 起点のある推薦に、プレイヤーの好みをどれだけ混ぜるか
+    "chainEvery": 0,               # 仮: 起点があるとき、何マップごとに起点を動かすか。0: 動かさない
+    "chainFirstWeight": 0.0,       # 仮: 起点が動いた後も残す、最初の起点の点の割合
+    "mapsPerSong": 1,              # 仮: 一覧に入れる 1 曲のマップ（ほかの作者のマップ）の数。0: 上限なし
+    "mapsPerArtist": 3,            # 一覧に入れる 1 アーティスト（同じアーティストの組）のマップの数。0: 上限なし（OctantSpecs 法 3.4）
+    "sameSongCosine": 0.9,         # 仮: 2 つのマップを同じ曲とみなす、音楽のビューの平均コサインの下限
+    "mixPriorDrafts": 20,          # 仮: ミックスの手札で、手札ごとの残した率を、手札に共通の率へ縮める重み（下見の数）
+                                   # （1 人の下見での前向きの試しで、20 から 50 が一番損が少なかった）
+    # 難易度
+    "features": {"nps": 1.0, "njs": 1.0},  # 距離に使う譜面の特徴と、その重み
+    "k": 5,                        # 距離として平均する、一番近い得意な譜面の数
+    "normalPercentile": 80,        # クリアした譜面の距離のうち、この百分位までを「普通」とする
+    "strongRecentClears": 200,     # 得意な譜面の枠になる、直近のクリアの数
+    "minClears": 50,               # プレイスタイルのクリアがこれより少なければ、そのプレイスタイルは難易度を合わせない
+    "minFailsForCurve": 30,        # 失敗がこれより少なければクリアの見込みの曲線を作らない。得意な譜面の一番古いクリア以降の
+                                   # 失敗がこれより少なければ苦手な方向を作らない
+    "directionShrinkPlays": 100,   # 仮: 学習した苦手な方向の重みと設定の重みが半々になる、プレイ（クリアと失敗）の数
+    "toleranceSd": 1.0,            # 目標から許す距離。クリアした距離の標準偏差を単位にする
+    "toleranceMaxSd": 2.0,         # 候補が少なすぎるとき、ここまで広げる
+    "penaltyWeight": 1.0,          # 目標からの距離の罰の重み（`beta`）
+    "challengeClearChance": 0.5,   # 挑戦の狙いが目指すクリアの見込み
+    "warmupScale": 0.5,            # ウォームアップの目標 = これ x 普通の目標
+    # 足切り（ceiling）: 狙いとは別に、プレイヤーが入れる上限
+    "ceiling": False,              # ceilingFeatures のどれかでプレイヤーの上限を超える譜面と、floorFeatures の
+                                   # どれかで下限を下回る譜面を外す
+    "ceilingFeatures": ["pass"],   # 仮: 上限を決める譜面の指標（1 人の失敗を一番よく当てたのは Pass。Movement は
+                                   # ほとんど足さず、同時に画面にあるノーツ（nps x ジャンプの時間）は、何も外さない
+                                   # ほど高くしない限り遊びたい譜面を外した）。DB にない指標は使わない
+    "ceilingPercentile": 97,       # 仮: 上限は直近のクリアのこの百分位（90 では遊んでいる譜面の半分が外れた）
+    "floorFeatures": [],           # 下限を決める譜面の指標（NJS の下限は、同時に画面にあるノーツより失敗の当たりが
+                                   # 悪く、多く外した）
+    "floorBelowMedian": 3.0,       # 仮: 下限は直近のクリアの中央値からこれを引いたもの
+    "ceilingMinClears": 20,        # 仮: プレイスタイルのクリア（自分の素のもの、続いて strongRecentClears までの
+                                   # PlayerData のもの）がこれより少なければ、そこには上限も下限も付けない
 }
 
 AIMS = ("normal", "challenge", "warmup")
 
-# What each number may be: (low, high, whole). The bounds are this runtime's own guard, not decided in OctantSpecs:
-# wide enough for any sensible setting, narrow enough that no value can run the host away (the tolerance widening
-# loop in recommend.py steps 0.5 at a time up to toleranceMaxSd, an unbounded percentile or share breaks numpy, and
-# a hand in a DB carries params too: notes/security-audit-2026-10-21.md, 8). `whole` means no fraction; 300.0 passes.
+# 各数が取れる値: (下限, 上限, 整数か)。範囲はこの推薦側の守りで、OctantSpecs では決めていない: まともな設定は
+# どれも入るほど広く、どの値でもホストを暴走させないほど狭い（recommend.py の許容幅を広げるループは 0.5 ずつ
+# toleranceMaxSd まで進み、範囲のない百分位や割合は numpy を壊し、DB の手札も params を運ぶ）。整数かが真なら
+# 小数を許さない。300.0 は通る。
 BOUNDS = {
     "minViewWeight": (0, 1, False),
     "recentPlays": (0, 10**6, True),
@@ -85,7 +75,7 @@ BOUNDS = {
     "toleranceSd": (0, 100, False),
     "toleranceMaxSd": (0, 100, False),
     "penaltyWeight": (0, 10**6, False),
-    "challengeClearChance": (0.001, 0.999, False),  # log(c / (1 - c)) must stay finite (skill.py)
+    "challengeClearChance": (0.001, 0.999, False),  # log(c / (1 - c)) が有限のままであること（skill.py）
     "warmupScale": (0, 100, False),
     "ceilingPercentile": (0, 100, False),
     "floorBelowMedian": (0, 1e6, False),
@@ -104,10 +94,9 @@ def _number(value, low, high, whole):
 
 
 def why_invalid(params):
-    """Why these params cannot be used, or None. Unknown keys are ignored as resolve ignores them (contract 1
-    (OctantCompass/OctantHarvest to OctantVector)); a known key with a value outside BOUNDS, or of another type, is refused
-    before it reaches the handling. Checked by recommend and describe (the request fails) and by the hand checks in
-    common/hands.py (the hand is left out of the list)."""
+    """この params を使えない理由。使えれば None。知らないキーは resolve と同じく無視する（契約1（OctantCompass/
+    OctantHarvest to OctantVector））。知っているキーで、値が BOUNDS の外か型が違うものは、扱い方に届く前に断る。
+    recommend と describe（要求が失敗する）と、common/hands.py の手札の確認（手札が一覧から外れる）が確かめる。"""
     for key, value in (params or {}).items():
         if key not in DEFAULTS:
             continue
@@ -130,7 +119,7 @@ def why_invalid(params):
 
 
 def resolve(params):
-    """DEFAULTS with the known keys of `params` (OctantCompass's values) put over them."""
+    """DEFAULTS に、`params` の知っているキーを上書きしたもの。"""
     out = dict(DEFAULTS)
     for k, v in (params or {}).items():
         if k in DEFAULTS:

@@ -1,4 +1,4 @@
-"""Encoders computed from the catalogue record alone (no zip access): NPS/NJS per difficulty, metadata/tags."""
+"""カタログの記録だけから計算するエンコーダー（zip は開かない）: 難易度ごとの NPS/NJS、メタデータとタグ。"""
 import numpy as np
 
 from ...common.charts import DIFF_ORDER
@@ -7,12 +7,12 @@ from .base import Encoder, register
 
 @register
 class NpsNjs(Encoder):
-    """NPS and NJS for Standard Easy..ExpertPlus (a missing slot copies the nearest present one) + presence flags.
-    A map-level summary of chart values for experiments only: dbrelease.py refuses it (chart views must have chart
-    rows; per-chart NPS and NJS are in the DB's charts table)."""
+    """Standard の Easy..ExpertPlus の NPS と NJS（ない枠は一番近いある枠を写す）と、あるかどうかの印。
+    譜面の値をマップ単位にまとめた実験用のもの: dbrelease.py は受け付けない（譜面のビューは譜面の行を持つこと。
+    譜面ごとの NPS と NJS は DB の charts の表にある）。"""
     id = "npsnjs_std"
     dim = 15
-    role = "chart"  # describes the charts' density, though it is read from the catalogue
+    role = "chart"  # カタログから読むが、譜面の密度を表す
     inputs = ("meta:versions.diffs",)
 
     def params(self):
@@ -39,8 +39,8 @@ TAGS = ["accuracy", "balanced", "challenge", "dance-style", "fitness", "speed", 
 
 @register
 class MetaTags(Encoder):
-    """BeatSaver tags + year, length, BPM and flags. Deliberately no popularity and no mapper identity, and nothing
-    computed from the charts (version 2 dropped has_chroma_ne_me and n_std_diffs: chart information stays per chart)."""
+    """BeatSaver のタグと、年、長さ、BPM、印。人気と譜面の作者は意図して入れず、譜面から計算したものも入れない
+    （版 2 で has_chroma_ne_me と n_std_diffs を外した: 譜面の情報は譜面ごとに持つ）。"""
     id = "meta_tags"
     version = "2"
     inputs = tuple(f"meta:{f}" for f in ["tags", "uploaded", "createdAt", "metadata.duration", "metadata.bpm", "ranked",

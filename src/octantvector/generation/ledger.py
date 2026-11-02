@@ -1,15 +1,14 @@
-"""The ledger: OctantVector's own state in one SQLite file (<store>/ledger.sqlite). The archive and the catalogue stay
-read-only; everything OctantVector decides about them is written here. See OctantSpecs octantvector/design.md, データ.
+"""台帳: OctantVector 自身の状態を 1 つの SQLite のファイル（<store>/ledger.sqlite）に持つ。アーカイブとカタログは
+読むだけで、OctantVector がそれについて決めたことはすべてここに書く。
 
-  versions   one row per BeatSaver version hash: map key, state (current / old / deleted), commit_seq of its zip in
-             the archive (NULL = no zip yet), zip SHA-256 (recorded when the zip is first read), first/last seen
-  meta_revs  per version and map-kind encoder: digest of the catalogue fields the encoder declares (inputs
-             "meta:<field>") and when that digest was first seen; the newest row is the current one
-  computed   per version and encoder fingerprint: result (ok / error / skip), the input digest it was computed
-             from, the error text and when
-  pools      per named pool and version: when it entered and (if so) left the pool
+  versions   BeatSaver の版の hash ごとに 1 行: マップの key、状態（current / old / deleted）、アーカイブにある zip の
+             commit_seq（NULL = まだ zip がない）、zip の SHA-256（zip を最初に読んだときに記録）、最初と最後に見た時刻
+  meta_revs  版とマップの種類のエンコーダーごと: エンコーダーが宣言するカタログの欄（入力 "meta:<field>"）の
+             要約と、その要約を最初に見た時刻。一番新しい行が今のもの
+  computed   版とエンコーダーの fingerprint ごと: 結果（ok / error / skip）、計算した元の入力の要約、エラーの文と時刻
+  pools      名前の付いたプールと版ごと: プールに入った時刻と、出たならその時刻
 
-Each step reads only the ledger to decide what is left, so an interrupted run continues where it stopped.
+どの段も台帳だけを読んで残りを決めるので、止まった実行は止まったところから続く。
 """
 import hashlib
 import json
@@ -39,8 +38,7 @@ def now():
 
 
 def field(m, v, name):
-    """Value of a declared catalogue field: "versions.<x>" reads the version record, anything else the map record;
-    dots walk into nested objects."""
+    """宣言したカタログの欄の値: "versions.<x>" は版の記録を、それ以外はマップの記録を読む。ドットで入れ子の中へ進む。"""
     obj, path = (v, name.split(".")[1:]) if name.startswith("versions.") else (m, name.split("."))
     for p in path:
         obj = obj.get(p) if isinstance(obj, dict) else None
@@ -68,19 +66,19 @@ class Ledger:
     @classmethod
     @contextmanager
     def of(cls, store):
-        """The ledger of the working store `store` (<store>/ledger.sqlite), closed when the block ends."""
+        """作業用ストア `store` の台帳（<store>/ledger.sqlite）。ブロックが終わると閉じる。"""
         led = cls(Path(store) / "ledger.sqlite")
         try:
             yield led
         finally:
             led.close()
 
-    # ---- ingest -----------------------------------------------------------------------------------------------
+    # ---- 取り込み -----------------------------------------------------------------------------------------------
 
     def ingest(self, maps, available, encoders, pools):
-        """maps: iterable of catalogue map records; available: {hash: commit_seq} of zips in the archive;
-        encoders: {id: encoder} whose meta digests to record (map kind only); pools: {name: definition} (pools.py).
-        -> counts of what changed."""
+        """maps: カタログのマップの記録の iterable。available: アーカイブにある zip の {hash: commit_seq}。
+        encoders: メタの要約を記録する {id: エンコーダー}（マップの種類だけ）。pools: {name: 定義}（pools.py）。
+        -> 変わったものの数。"""
         from .catalogue import published_version
         from .pools import matches, members
         t = now()
@@ -126,7 +124,7 @@ class Ledger:
             for h, (k, s) in prev.items():
                 if h in seen or s == "deleted":
                     continue
-                # no longer listed: replaced by a newer version of a map still in the catalogue, else the map is gone
+                # もう載っていない: カタログに残るマップの新しい版に置き換わったか、そうでなければマップがなくなった
                 state = "old" if k in keys else "deleted"
                 if state != s:
                     changed(h, state)
@@ -143,21 +141,21 @@ class Ledger:
                             [(t, pool, h) for h in inside - hashes])
         return {"size": len(hashes), "entered": len(hashes - inside), "left": len(inside - hashes)}
 
-    # ---- planning ---------------------------------------------------------------------------------------------
+    # ---- 計画 ---------------------------------------------------------------------------------------------
 
     def pool(self, name):
-        """Current members of a pool in archive order (versions without a zip last) -> [(hash, seq)]."""
+        """プールの今のメンバー。アーカイブの順（zip のない版は最後）-> [(hash, seq)]。"""
         return self.db.execute(
             "SELECT v.hash, v.seq FROM pools p JOIN versions v ON v.hash = p.hash "
             "WHERE p.pool=? AND p.left_at IS NULL AND v.state='current' "
             "ORDER BY v.seq IS NULL, v.seq, v.hash", (name,)).fetchall()
 
     def pool_hashes(self, name):
-        """The hashes of pool(name), in the same order."""
+        """pool(name) の hash。同じ順。"""
         return [h for h, _ in self.pool(name)]
 
     def old_versions(self):
-        """[(hash, map key)] of the versions a newer version of the same map replaced."""
+        """同じマップの新しい版に置き換わった版の [(hash, マップの key)]。"""
         return self.db.execute("SELECT hash, key FROM versions WHERE state='old'").fetchall()
 
     def current_digest(self, h, encoder_id):
@@ -166,9 +164,9 @@ class Ledger:
         return r[0] if r else None
 
     def todo(self, enc, fingerprint, members, retry_errors=False):
-        """Hashes of `members` ([(hash, seq)]) that `enc` still has to compute: no result for this fingerprint yet,
-        an error when retrying, or (map kind) a catalogue digest that changed since it was computed. Audio, image
-        and chart encoders need the zip, so versions without one wait."""
+        """`members`（[(hash, seq)]）のうち `enc` がまだ計算すべき hash: この fingerprint の結果がまだない、やり直すときの
+        エラー、または（マップの種類で）計算した後にカタログの要約が変わったもの。音声、画像、譜面のエンコーダーは zip が
+        要るので、zip のない版は待つ。"""
         done = {h: (r, d) for h, r, d in self.db.execute(
             "SELECT hash, result, input_digest FROM computed WHERE fingerprint=?", (fingerprint,))}
         out = []
@@ -182,10 +180,10 @@ class Ledger:
                 out.append(h)
         return out
 
-    # ---- results ----------------------------------------------------------------------------------------------
+    # ---- 結果 ----------------------------------------------------------------------------------------------
 
     def record(self, enc, fingerprint, rows):
-        """rows: [(hash, result, input_digest, error)]. Call only after ok vectors are flushed to the store."""
+        """rows: [(hash, result, input_digest, error)]。ok のベクトルをストアに書き出してから呼ぶこと。"""
         t = now()
         with self.db:
             self.db.executemany(
@@ -194,10 +192,9 @@ class Ledger:
                 [(h, fingerprint, f"{enc.id}@{enc.version}", r, d, e, t) for h, r, d, e in rows])
 
     def adopt(self, enc, fingerprint, keys):
-        """Vectors already in the store that the ledger has no ok for (flushed just before a crash, or written by a
-        derived encoder) count as ok.
-        Map-kind rows get the current digest: the catalogue is assumed unchanged since they were computed. Chart keys
-        count for their map version (results are recorded per version)."""
+        """ストアにもうあるのに台帳に ok のないベクトル（落ちる直前に書き出したか、派生エンコーダーが書いた）は ok と数える。
+        マップの種類の行には今の要約を付ける: 計算してからカタログは変わっていないとみなす。譜面のキーはそのマップの版に
+        数える（結果は版ごとに記録する）。"""
         known = {h for (h,) in self.db.execute("SELECT hash FROM computed WHERE fingerprint=? AND result='ok'",
                                                (fingerprint,))}
         new = [h for h in dict.fromkeys(key_hash(k) for k in keys) if h not in known]
@@ -206,7 +203,7 @@ class Ledger:
         return len(new)
 
     def zip_sha(self, h, sha):
-        """Record the zip's SHA-256 the first time it is read. -> False if a different zip was seen for this hash."""
+        """zip を最初に読んだときに、その SHA-256 を記録する。-> この hash で別の zip を見ていれば False。"""
         r = self.db.execute("SELECT zip_sha256 FROM versions WHERE hash=?", (h,)).fetchone()
         if r is None or r[0] is None:
             with self.db:
@@ -214,10 +211,10 @@ class Ledger:
             return True
         return r[0] == sha
 
-    # ---- reporting --------------------------------------------------------------------------------------------
+    # ---- 報告 --------------------------------------------------------------------------------------------
 
     def results(self):
-        """Every computed row as (key "<hash>:<fingerprint>", encoder, result, input digest, error, at)."""
+        """計算したすべての行を (key "<hash>:<fingerprint>", encoder, result, input digest, error, at) で。"""
         return set(self.db.execute("SELECT hash || ':' || fingerprint, encoder, result, input_digest, error, at "
                                    "FROM computed"))
 

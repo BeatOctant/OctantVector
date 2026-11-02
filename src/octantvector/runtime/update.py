@@ -1,18 +1,17 @@
-"""The host's side of the contract 5 index (OctantSpecs contracts/, 契約5（OctantHarvest to OctantCompass）: DBの配布と更新). OctantVector itself never
-downloads anything: OctantCompass fetches the files and calls these.
+"""契約5 の索引（OctantSpecs contracts/、契約5（OctantHarvest to OctantCompass）: DBの配布と更新）のホスト側。
+OctantVector 自身は何もダウンロードしない: ファイルは渡されたものを使う。
 
-  plan_update(index, local_version)  which entries to fetch: the diffs after the local version when it is in the
-                                     chain, else the full and every diff after it (contract 1 (OctantCompass to OctantVector))
+  plan_update(index, local_version)  取る項目: 手元の版が連なりにあればその後の差分、なければ全量とその後の
+                                     すべての差分（契約1（OctantCompass to OctantVector））
   apply_update(files, base, out, trust)
-                                     every fetched entry checked, extracted and applied in order; the new full DB is
-                                     written to `out` and the local DB at `base` is never changed (contract 1). A
-                                     diff that would lose what this OctantVector does not know is refused (DBError,
-                                     dbformat.apply_diff); the full of that version gives the same DB
-  unpack                             one entry checked and extracted
-  import_archive(path, out, trust)   one full version handed over as a single tar (no index: the Dev 版 hand-off,
-                                     contract 5 非公開（探求中）の扱い) checked and extracted to `out` (contract 1)
+                                     取った項目を順に確かめ、展開して当てる。新しい全量の DB は `out` に書き、
+                                     `base` の手元の DB は変えない（契約1）。この OctantVector が知らないものを
+                                     失う差分は断る（DBError、dbformat.apply_diff）。その版の全量なら同じ DB になる
+  unpack                             1 つの項目を確かめて展開する
+  import_archive(path, out, trust)   1 つの tar で手渡しされた全量の版（索引なし: 契約5 非公開（探求中）の扱い）を
+                                     確かめて `out` に展開する（契約1）
 
-The index is written by generation/index.py.
+索引を書くのは generation/index.py。
 """
 import hashlib
 import shutil
@@ -28,12 +27,12 @@ READS_MAJOR = major(SCHEMA_VERSION)
 KINDS = ("full", "diff")
 
 
-MAX_NAME = 100  # bytes of a dbVersion: resolve() does not fail on a name too long for the file system, a later use does
+MAX_NAME = 100  # dbVersion のバイト数: resolve() はファイルシステムに長すぎる名前でも失敗せず、後で使うときに失敗する
 
 
 def _folder_name(entry):
-    """The entry's dbVersion, which names folders and files on the host. The index is not signed, so anything but a
-    single plain path component (a name that could leave the folder it is put in) is refused before any use."""
+    """項目の dbVersion。ホストのフォルダとファイルの名前になる。索引は署名されないので、1 つの素のパスの要素以外
+    （置いたフォルダから出られる名前）は、使う前に断る。"""
     v = entry.get("dbVersion")
     if not isinstance(v, str) or v in ("", ".", "..") or "/" in v or "\\" in v or "\0" in v or ":" in v \
             or Path(v).is_absolute() or len(v.encode()) > MAX_NAME:
@@ -44,7 +43,7 @@ def _folder_name(entry):
 
 
 def _inside(parent, name):
-    """parent / name, refused unless it resolves inside parent (the name check above, done again on the real path)."""
+    """parent / name。parent の中に解決しなければ断る（上の名前の確認を、実際のパスでもう一度する）。"""
     path = Path(parent) / name
     if not path.resolve().is_relative_to(Path(parent).resolve()):
         raise FormatError(f"{name!r} would be written outside {parent}")
@@ -52,8 +51,8 @@ def _inside(parent, name):
 
 
 def plan_update(index, local_version=None):
-    """Entries to fetch, in order, to reach the newest version this OctantVector can read. [] when up to date.
-    VersionError when the index itself is in a format this OctantVector does not read (its indexVersion)."""
+    """この OctantVector が読める一番新しい版に届くために、順に取る項目。最新なら []。
+    索引そのものがこの OctantVector の読めない形式（indexVersion）なら VersionError。"""
     found = index.get("indexVersion")
     try:
         ok_index = major(found) == major(INDEX_VERSION)
@@ -74,8 +73,8 @@ def plan_update(index, local_version=None):
 
 
 def unpack(entry, part_paths, out_dir, trust=None):
-    """Check and extract one entry's parts (in index order) into out_dir. Its manifest.sig is looked up against the
-    bundled keys and anything but a good signature is a SignatureWarning, not a failure. -> the extracted DB folder."""
+    """1 つの項目の部分を（索引の順に）確かめ、out_dir に展開する。manifest.sig は同梱の鍵と照らし、正しい署名でなければ
+    失敗ではなく SignatureWarning。-> 展開した DB のフォルダ。"""
     version = _folder_name(entry)
     if len(part_paths) != len(entry["parts"]):
         raise FormatError(f"{version}: {len(entry['parts'])} parts expected, got {len(part_paths)}")
@@ -106,11 +105,10 @@ def unpack(entry, part_paths, out_dir, trust=None):
 
 
 def _extract(tar_path, out_dir, label):
-    """The one version folder in the tar at tar_path, extracted into out_dir; anything but plain files under a single
-    top folder is refused before anything is written. Only an uncompressed tar is accepted (generation writes one):
-    a compressed one could expand without bound and fill the disk (a tar bomb), while in a plain tar every member's
-    bytes are stored in full, so no more is written than was fetched and checked. A member that declares more than
-    the archive holds (a sparse member) is refused for the same reason."""
+    """tar_path の tar にある 1 つの版のフォルダを out_dir に展開する。1 つの最上位のフォルダの下の素のファイル以外があれば、
+    何も書く前に断る。受け付けるのは圧縮しない tar だけ（生成側が書くもの）: 圧縮したものは際限なく膨らんでディスクを
+    埋め得る（tar 爆弾）が、素の tar ではどのメンバーのバイトもそのまま入っているので、取って確かめた分より多くは
+    書かれない。同じ理由で、アーカイブが持つより多くを宣言するメンバー（疎なメンバー）も断る。"""
     try:
         tar = tarfile.open(tar_path, mode="r:")
     except tarfile.TarError as ex:
@@ -131,16 +129,15 @@ def _extract(tar_path, out_dir, label):
 
 
 def _warn_unsigned(folder, trust, label):
-    sig = signing.inspect(folder, trust)  # the signature names the author and does not block (contract 5, 署名)
+    sig = signing.inspect(folder, trust)  # 署名は作り手を示すだけで、止めはしない（契約5、署名）
     if sig["status"] != "signed" and not (sig["status"] == "unsigned" and signing.check_trust(trust)[1]):
         warnings.warn(signing.SignatureWarning(f"{label}: {sig['detail']}"), stacklevel=3)
 
 
 def import_archive(path, out, trust=None):
-    """path: one full version as a single tar (generation's `pack`, the same bytes as its unsplit index file), handed
-    over without an index. -> `out`, the full DB folder, which appears only once the files match the manifest; on any
-    failure nothing is left at `out`. trust as apply_update's; a version not signed by a known key is still used, with
-    a SignatureWarning."""
+    """path: 1 つの tar にした全量の版（生成側の `pack`。分けない索引のファイルと同じバイト列）。索引なしで手渡しされる。
+    -> `out`、全量の DB のフォルダ。ファイルがマニフェストと合ってから現れ、どこかで失敗すれば `out` には何も残らない。
+    trust は apply_update と同じ。知っている鍵で署名されていない版も SignatureWarning 付きで使う。"""
     signing.check_trust(trust)
     out = Path(out)
     if out.exists():
@@ -163,12 +160,12 @@ def import_archive(path, out, trust=None):
 
 
 def apply_update(files, base, out, trust=None):
-    """files: [(entry, part paths)] in plan_update's order; base: the local full DB folder (None when plan_update
-    asked for a full first). -> `out`, a full DB folder that appears only once every step passed. On any failure
-    nothing is left at `out` and `base` is untouched. trust: {"keys": {keyId: public key base64} known besides the
-    bundled ones, "allowUnsigned": no warning for versions without manifest.sig (development)}; None = the bundled
-    keys only. A version that is not signed by a known key is still applied, with a SignatureWarning."""
-    signing.check_trust(trust)  # a malformed trust fails before anything is unpacked
+    """files: plan_update の順の [(項目, 部分のパス)]。base: 手元の全量の DB のフォルダ（plan_update がまず全量を頼んだ
+    ときは None）。-> `out`、すべての段を通ってから現れる全量の DB のフォルダ。どこかで失敗すれば `out` には何も残らず、
+    `base` は触れないまま。trust: {"keys": 同梱のほかに知っている {keyId: 公開鍵の base64}、"allowUnsigned":
+    manifest.sig のない版に警告しない（開発用）}。None = 同梱の鍵だけ。知っている鍵で署名されていない版も
+    SignatureWarning 付きで当てる。"""
+    signing.check_trust(trust)  # 壊れた trust は、何かを展開する前に失敗する
     out = Path(out)
     if out.exists():
         raise FormatError(f"{out} already exists; a DB is never overwritten")

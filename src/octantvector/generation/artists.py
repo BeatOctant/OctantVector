@@ -1,12 +1,12 @@
-"""The relation view listenbrainz_artists@<YYYYMMDD> (the day of fetchedAt), role `artist` (OctantSpecs contracts/,
-contract 2 (DB build to recommendation core) ビューの種類; decisions.md, 近いアーティスト) from the two optional files of
-the crawl (contract 4 (OctantHarvest crawl to OctantVector)), in the folder `artists`:
-  map_artists.jsonl.gz      {hash, mbids}: the MusicBrainz artist IDs of a map version (no names: OctantSpecs law 3.2)
-  similar_artists.jsonl.gz  a header {algorithm, fetchedAt}, then {mbid, similar: [[mbid, score], ...]} from
-                            ListenBrainz
-Members are the IDs of the maps in the DB. A pair's score is the ListenBrainz score divided by the largest score of
-its list, so each ID's best neighbour scores 1; only pairs whose two IDs are members are kept, at most `per_member`
-per ID (the best ones). The view's `credits` name both sources.
+"""関係のビュー listenbrainz_artists@<YYYYMMDD>（fetchedAt の日付）、役割 `artist`（OctantSpecs contracts/、
+契約2（DB build to recommendation core）ビューの種類）。クロール（契約4（OctantHarvest crawl to OctantVector））の
+フォルダ `artists` にある、なくてもよい 2 つのファイルから作る:
+  map_artists.jsonl.gz      {hash, mbids}: マップの版の MusicBrainz のアーティスト ID（名前は持たない: OctantSpecs 法 3.2）
+  similar_artists.jsonl.gz  見出し {algorithm, fetchedAt}、続いて ListenBrainz の
+                            {mbid, similar: [[mbid, score], ...]}
+メンバーは DB にあるマップの ID。対の点は ListenBrainz の点をその一覧の最大の点で割ったもので、各 ID の一番近い
+相手が 1 になる。2 つの ID がどちらもメンバーの対だけを、ID ごとに `per_member` まで（よいものから）残す。
+ビューの `credits` には両方の出所を書く。
 """
 from pathlib import Path
 
@@ -19,8 +19,7 @@ CREDITS = ("MusicBrainz artist IDs, https://musicbrainz.org/, core data under CC
 
 
 def relation(folder, hashes, per_member=PER_MEMBER):
-    """-> (view key, relation content as in common/dbformat.py) for the maps `hashes`, or None when the folder lacks
-    the files."""
+    """マップ `hashes` の (ビューのキー, common/dbformat.py の形の関係の中身)。フォルダにファイルがなければ None。"""
     folder = Path(folder)
     if not (folder / MAP_FILE).is_file() or not (folder / SIMILAR_FILE).is_file():
         return None

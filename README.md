@@ -23,18 +23,6 @@
 - 設定（パス・環境変数）: [octantvector/config.md](https://github.com/BeatOctant/OctantSpecs/blob/main/octantvector/config.md)
 - 実験ログ: [octantvector/experiments.md](https://github.com/BeatOctant/OctantSpecs/blob/main/octantvector/experiments.md)
 
-## 組み合わせる版
-
-支えるのは、各部品の最新の版どうしの組み合わせだけです（[decisions.md の全体と段階](https://github.com/BeatOctant/OctantSpecs/blob/main/decisions.md#全体と段階)、2026-10-22）。この README を書いた時点の相手は次のとおりです。
-
-| 相手 | 版 | つなぐもの |
-| --- | --- | --- |
-| OctantHarvest（DB を書く計算を呼ぶ） | 最新 | [契約1 生成側（OctantHarvest → OctantVector）](https://github.com/BeatOctant/OctantSpecs/blob/main/contracts/engine-generation.md) 1.1、[契約4（OctantHarvest の収集結果 → OctantVector）](https://github.com/BeatOctant/OctantSpecs/blob/main/contracts/generation-input.md) |
-| OctantCompass（推薦の計算を呼ぶ） | 最新 | [契約1 推薦側（OctantCompass → OctantVector）](https://github.com/BeatOctant/OctantSpecs/blob/main/contracts/engine-runtime.md) 1.1、[契約2（DB 生成 ↔ 推薦コア）](https://github.com/BeatOctant/OctantSpecs/blob/main/contracts/vector-db.md) 1.1 |
-| OctantVectorPlugins | `PLUGIN_API` 0.3 のもの（いまの main） | `octantvector.plugin` |
-
-このリポジトリの今の版は v0.12.1 です。
-
 ## セットアップ
 
 ```bash
@@ -45,7 +33,7 @@ python -m venv .venv
 .venv/bin/pip install -e ".[embed,dev]"
 ```
 
-音や画像のモデルを使うビュー（CLAP、MERT、WavLM とそのボーカル版、Whisper、SigLIP）は [OctantVectorPlugins](https://github.com/BeatOctant/OctantVectorPlugins) のプラグインにあり、使うものだけ別に入れます（`[vocal]` はボーカル版も計算するときだけ）。プラグインは `octantvector.plugin` の版（`PLUGIN_API`。いまは 0.3）が同じものだけが読み込まれ、違えば `check` とビューを使うときのエラーに理由が出ます:
+音や画像のモデルを使うビュー（CLAP、MERT、WavLM とそのボーカル版、Whisper、SigLIP）は [OctantVectorPlugins](https://github.com/BeatOctant/OctantVectorPlugins) のプラグインにあり、使うものだけ別に入れます（`[vocal]` はボーカル版も計算するときだけ）。プラグインは `octantvector.plugin` の版（`PLUGIN_API`）が同じものだけが読み込まれ、違えば `check` とビューを使うときのエラーに理由が出ます:
 
 ```bash
 .venv/bin/pip install "octantvector-clap[vocal] @ git+https://github.com/BeatOctant/OctantVectorPlugins#subdirectory=clap"
@@ -65,7 +53,7 @@ python -m venv .venv
 .venv/bin/octantvector check
 ```
 
-OctantCompass と OctantHarvest は、このリポジトリの版のタグ（`v0.12.1` の形）から `pip install "octantvector @ git+https://github.com/BeatOctant/OctantVector@v0.12.1"` で入れます（[契約1（OctantCompass/OctantHarvest to OctantVector）の版の付け方](https://github.com/BeatOctant/OctantSpecs/blob/main/contracts/engine-runtime.md#版の付け方)）。タグを付ける前の変更を使うときは、そのコミットから入れます（`@<コミット>`。タグはいくつかの変更をまとめて付ける。2026-10-19）。
+OctantCompass と OctantHarvest は、このリポジトリの最新の版のタグから入れます。OctantHarvest は `pip install "octantvector @ git+https://github.com/BeatOctant/OctantVector@<版>"` で入れ、OctantCompass は `pyproject.toml` の `tool.uv.sources` でタグを決めて uv で入れます（[契約1 の版の付け方](https://github.com/BeatOctant/OctantSpecs/blob/main/contracts/engine-runtime.md#版の付け方)）。タグを付ける前の変更を使うときは、そのコミットから入れます（`@<コミット>`）。BeatOctant の部品は、どれも最新の版どうしで使ってください。
 
 ## 使い方
 
@@ -116,6 +104,8 @@ PYTHONPATH=src .venv/bin/python -I spikes/compare_views.py old/store store clap_
 ```bash
 .venv/bin/octantvector release clap_htsat_unfused meta_tags
 ```
+
+`--export <JSON のファイル>` を付けると、ビューごとに DB へ書き出す次元と型を変えられます（`{"mert_v1_95m": {"dim": 128, "dtype": "int8"}}` の形。書かないビューはエンコーダーの次元のまま float16）。store のベクトルはそのままなので、計算し直さずに別の大きさで書き出せます。指定を変えた版は全量になります。ジャンルのビューは次元を減らせません（型は変えられます）。付けなければ校正にある指定のままです。
 
 `--notice <Markdown のファイル>` を付けると、DB 全体の利用条件とクレジットとしてマニフェストの `notice` に入ります（付けなければ前の版のものを引き継ぎます）。ビューごとのクレジット（モデルや移植したコードの出所）は、エンコーダの `credits` からマニフェストのビューの `credits` に自動で入ります。
 

@@ -1,16 +1,15 @@
-"""Play-style tags from the swing features (OctantSpecs octantvector/swing.md, "スタイルタグ").
+"""スイングの特徴からのプレイスタイルのタグ（OctantSpecs octantvector/swing.md、「スタイルタグ」）。
 
-Two kinds:
-  learned  one logistic model per BeatSaver style tag (accuracy, balanced, ...), trained on the mapper-chosen tags
-           by `octantvector swing-train`; outputs a probability.
-  fine     finer tags (stream, vibro, inverted, bomb_reset, ...) defined as rules over the features. A rule
-           compares a feature with a population quantile ("q>=" / "q<=", 0..1) or an absolute value (">=" / "<=").
-           A tag is on when every condition holds; its score (0..1) is its weakest condition, so it also orders maps
-           that miss the tag. A quantile condition scores the quantile on the tag's side; an absolute one scores
-           half the share of the threshold reached below it and 0.5 + half the quantile above it, so maps past the
-           threshold stay ordered.
-The quantiles and the learned weights live in one model file (JSON) written by `swing-train`. Rules can be changed
-or added in the `[swing_tags]` table of the config file, e.g. `stream = [["alternation", "q>=", 0.7]]`.
+2 種類:
+  learned  BeatSaver のスタイルタグ（accuracy、balanced など）ごとに 1 つのロジスティックのモデル。譜面の作者が
+           選んだタグで `octantvector swing-train` が学習し、確率を出す。
+  fine     特徴の上の決まりで定める、もっと細かいタグ（stream、vibro、inverted、bomb_reset など）。決まりは
+           特徴を、全体の分位点（"q>=" / "q<="、0..1）か絶対値（">=" / "<="）と比べる。すべての条件を満たすと
+           タグが付き、点（0..1）は一番弱い条件の点なので、タグが付かないマップも並べられる。分位点の条件は
+           タグの側の分位点を点にする。絶対値の条件は、しきい値の下では届いた割合の半分、上では 0.5 + 分位点の
+           半分を点にするので、しきい値を超えたマップも並んだまま。
+分位点と学習した重みは、`swing-train` が書く 1 つのモデルのファイル（JSON）にある。決まりは設定ファイルの
+`[swing_tags]` の表で変えたり足したりできる。例 `stream = [["alternation", "q>=", 0.7]]`。
 """
 import hashlib
 import json
@@ -22,11 +21,11 @@ from .. import config
 from ..errors import GenerationError
 from .features import HAZARD_NAMES, NAMES
 
-# BeatSaver style tags, the "poodle" tag, and "modded" (the chart needs Noodle Extensions, Mapping Extensions or Vivify)
+# BeatSaver のスタイルタグ、"poodle" のタグ、"modded"（Noodle Extensions、Mapping Extensions、Vivify のどれかが要る譜面）
 LEARNED_TAGS = ["accuracy", "balanced", "challenge", "dance-style", "fitness", "speed", "tech", "poodle", "modded"]
 
 FINE_TAGS = {
-    # speed
+    # 速さ
     "speed":        [["ebpm_p90", "q>=", 0.85]],
     "stream":       [["alternation", "q>=", 0.6], ["gap_lt_1", "q>=", 0.8]],
     "vibro":        [["gap_lt_0", "q>=", 0.95], ["gap_lt_0", ">=", 0.05]],
@@ -34,7 +33,7 @@ FINE_TAGS = {
     "stamina":      [["pass_long", "q>=", 0.8], ["length_s", "q>=", 0.6]],
     "midspeed":     [["ebpm_median", "q>=", 0.35], ["ebpm_median", "q<=", 0.75], ["strain_mean", "q<=", 0.6]],
     "jumps":        [["hit_distance_p90", "q>=", 0.8], ["wide_jump_frac", "q>=", 0.8]],
-    # tech
+    # テク
     "angle_tech":   [["strain_p90", "q>=", 0.85]],
     "inverted":     [["inverted_frac", "q>=", 0.9], ["inverted_frac", ">=", 0.03]],
     "wrist_roll":   [["roll_change_mean", "q>=", 0.85], ["roll_speed_p90", "q>=", 0.6]],
@@ -49,17 +48,17 @@ FINE_TAGS = {
     "wide_reach":   [["outer_lane_frac", "q>=", 0.8], ["hand_x_std", "q>=", 0.8]],
     "dots":         [["dot_frac", "q>=", 0.9], ["dot_frac", ">=", 0.2]],
     "free_angles":  [["offgrid_angle_frac", ">=", 0.05]],
-    # flow / acc
+    # フロー / 精度
     "flowy":        [["linear_frac", "q>=", 0.75], ["rotation_mean", "q<=", 0.4], ["ebpm_median", "q<=", 0.7]],
     "acc":          [["full_swing_frac", "q>=", 0.65], ["ebpm_median", "q<=", 0.4], ["strain_mean", "q<=", 0.5]],
-    # note patterns
+    # ノーツのパターン
     "windows":      [["window_frac", "q>=", 0.9], ["window_frac", ">=", 0.02]],
     "stacks":       [["stack_frac", "q>=", 0.9], ["stack_frac", ">=", 0.03]],
     "sliders":      [["slider_frac", "q>=", 0.9], ["slider_frac", ">=", 0.03]],
     "chains":       [["chain_frac", ">=", 0.02]],
     "arcs":         [["arc_ps", ">=", 0.05]],
     "doubles":      [["double_frac", "q>=", 0.85]],
-    # walls
+    # 壁
     "art_walls":    [["art_wall_ps", ">=", 0.5], ["art_wall_frac", ">=", 0.8]],
     "workout_walls": [["head_move_mps", "q>=", 0.9], ["head_move_mps", ">=", 0.05]],
     "dodge_walls":  [["dodge_wall_ps", ">=", 0.05]],
@@ -67,15 +66,15 @@ FINE_TAGS = {
     "rhythm_walls": [["wall_rhythm_frac", ">=", 0.5], ["dodge_wall_ps", ">=", 0.03]],
     "dance_walls":  [["wall_rhythm_frac", ">=", 0.5], ["head_move_mps", "q>=", 0.8]],
     "vision_walls": [["vision_wall_frac", ">=", 0.05]],
-    # bombs
+    # 爆弾
     "bombs":        [["bomb_ps", "q>=", 0.9], ["bomb_ps", ">=", 0.1]],
     "art_bombs":    [["bomb_art_frac", ">=", 0.3], ["bomb_ps", ">=", 0.2]],
     "dodge_bombs":  [["bomb_dodge_ps", "q>=", 0.9], ["bomb_dodge_ps", ">=", 0.1]],
     "rhythm_bombs": [["bomb_rhythm_frac", ">=", 0.5], ["bomb_dodge_ps", ">=", 0.05]],
     "bomb_walls":   [["bomb_cluster_frac", ">=", 0.3], ["bomb_dodge_ps", ">=", 0.05]],
-    # body
+    # 体の動き
     "one_hand":     [["hands_ratio", "<=", 0.15]],
-    # reading
+    # 読み
     "dense_low_njs": [["nps", "q>=", 0.7], ["njs", "q<=", 0.3]],
     "high_njs":     [["njs", "q>=", 0.9]],
 }
@@ -85,14 +84,13 @@ N_QUANTILES = 101
 
 
 def is_hazard(conds):
-    """Wall and bomb tags (every condition on a wall/bomb feature) go to the `swing_hazards` view, the rest to
-    `swing_style`."""
+    """壁と爆弾のタグ（どの条件も壁か爆弾の特徴のもの）は `swing_hazards` のビューに、残りは `swing_style` に入れる。"""
     return all(f in HAZARD_NAMES for f, _, _ in conds)
 
 
 def load_rules(group=None):
-    """FINE_TAGS with tags replaced or added from the `[swing_tags]` table of the config file; group "style" or
-    "hazards" keeps only that view's tags."""
+    """設定ファイルの `[swing_tags]` の表でタグを置き換えたり足したりした FINE_TAGS。group が "style" か "hazards" なら、
+    そのビューのタグだけを残す。"""
     rules = {k: [list(c) for c in v] for k, v in FINE_TAGS.items()}
     for name, conds in config.section("swing_tags").items():
         for c in conds:
@@ -105,15 +103,15 @@ def load_rules(group=None):
     return rules
 
 
-# ---------------------------------------------------------------- model file
+# ---------------------------------------------------------------- モデルのファイル
 def signed_log(X):
-    """sign(x) * log(1 + |x|): heavy-tailed features on a scale linear models can use."""
+    """sign(x) * log(1 + |x|): 裾の重い特徴を、線形のモデルが使える尺度にする。"""
     return np.sign(X) * np.log1p(np.abs(X))
 
 
 def fit(X_all, X_tagged, tags, lam=10.0):
-    """X_all: features of every row (quantiles); X_tagged + tags: one row per map (hardest difficulty) and its
-    BeatSaver style tags. -> model dict (JSON-serialisable)."""
+    """X_all: すべての行の特徴（分位点用）。X_tagged + tags: マップごとに 1 行（一番難しい難易度）と、その BeatSaver の
+    スタイルタグ。-> モデルの dict（JSON にできる）。"""
     from .dataset import logistic_weights
     q = np.quantile(X_all, np.linspace(0, 1, N_QUANTILES), axis=0).T  # (features, N_QUANTILES)
     L = signed_log(np.asarray(X_tagged, float))
@@ -143,18 +141,18 @@ def model_hash(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()[:16]
 
 
-# ---------------------------------------------------------------- applying
+# ---------------------------------------------------------------- 当てはめ
 def quantile_of(model, X):
-    """Population quantile (0..1) of every feature value."""
+    """各特徴の値の、全体での分位点（0..1）。"""
     q = np.asarray(model["quantiles"])
     X = np.atleast_2d(X)
-    # mid-rank, so a value shared by many maps (e.g. 0 for "no bomb resets") sits in the middle of its run, not the top
+    # 中間の順位: 多くのマップが同じ値（例 「爆弾のリセットなし」の 0）のとき、その並びの上ではなく真ん中に置く
     return np.stack([(np.searchsorted(q[j], X[:, j], "left") + np.searchsorted(q[j], X[:, j], "right")) / (2 * q.shape[1])
                      for j in range(X.shape[1])], 1)
 
 
 def learned_probs(model, X):
-    """-> (n, len(LEARNED_TAGS)); NaN for tags the model has no weights for."""
+    """-> (n, len(LEARNED_TAGS))。モデルに重みのないタグは NaN。"""
     Z = np.clip((signed_log(np.atleast_2d(X)) - np.asarray(model["mu"])) / np.asarray(model["sd"]), -6, 6)
     out = np.full((Z.shape[0], len(LEARNED_TAGS)), np.nan)
     for j, t in enumerate(LEARNED_TAGS):
@@ -165,7 +163,7 @@ def learned_probs(model, X):
 
 
 def fine_tags(model, X, rules=None):
-    """-> (scores (n, len(rules)) in 0..1, on (n, len(rules)) bool), columns in rules order."""
+    """-> (点 (n, len(rules))、0..1, 付いたか (n, len(rules)) の bool)。列は rules の順。"""
     rules = rules or FINE_TAGS
     X = np.atleast_2d(X)
     Q = quantile_of(model, X)
@@ -191,7 +189,7 @@ def fine_tags(model, X, rules=None):
 
 
 def describe(model, x, rules=None):
-    """One chart's features -> (learned {tag: prob}, fine tags that are on, best first)."""
+    """1 つの譜面の特徴 -> (learned {tag: 確率}, 付いた細かいタグ。よいものから)。"""
     rules = rules or load_rules()
     p = learned_probs(model, x)[0]
     S, on = fine_tags(model, x, rules)

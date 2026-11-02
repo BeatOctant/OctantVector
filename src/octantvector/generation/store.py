@@ -1,9 +1,9 @@
-"""Per-encoder vector store: <root>/<id>@<version>/{encoder.json, shard_NNNN.npz}, keyed by map version hash, or
-by chart key for views with chart rows (charts.py).
+"""エンコーダーごとのベクトルのストア: <root>/<id>@<version>/{encoder.json, shard_NNNN.npz}。キーは版の hash、
+譜面の行を持つビューでは譜面のキー（charts.py）。
 
-Adding an encoder never touches other encoders' folders. encoder.json records the encoder definition and its
-fingerprint (encoders/base.py); if either changes without a version bump, e.g. a source view of a derived encoder
-moved to a new version, opening the store fails instead of mixing outputs.
+エンコーダーを足してもほかのエンコーダーのフォルダには触れない。encoder.json にはエンコーダーの定義と
+fingerprint（encoders/base.py）を記録する。版を上げずにどちらかが変わったら（例: 派生エンコーダーの元の
+ビューが新しい版になった）、出力を混ぜずにストアを開くのを失敗させる。
 """
 import json
 from pathlib import Path
@@ -15,7 +15,7 @@ from .errors import GenerationError
 
 class Store:
     def __init__(self, enc, root, flush_every=250, on_flush=None):
-        """on_flush(keys) runs after each shard is written (the ledger records results only once they are on disk)."""
+        """on_flush(keys) は各 shard を書いた後に走る（台帳は結果がディスクに載ってから記録する）。"""
         self.enc, self.on_flush = enc, on_flush
         self.dir = Path(root) / f"{enc.id}@{enc.version}"
         self.dir.mkdir(parents=True, exist_ok=True)
@@ -43,7 +43,7 @@ class Store:
         self.add_many({version_hash: vec})
 
     def add_many(self, items):
-        """{key: vector} of one map (its charts), kept in one shard so a map is never recorded half written."""
+        """1 マップ（その譜面）の {key: vector}。1 つの shard に入れ、マップが書きかけで記録されないようにする。"""
         vecs = {k: np.asarray(v, np.float32) for k, v in items.items()}
         bad = next((v.shape for v in vecs.values() if v.shape != (self.enc.dim,)), None)
         if bad is not None:
@@ -61,7 +61,7 @@ class Store:
                 self.on_flush(hs)
 
     def load(self):
-        """-> (list of hashes, (n, dim) float32 array). Later shards win on duplicate hashes."""
+        """-> (hash の list, (n, dim) の float32 配列)。hash が重なったら後の shard が勝つ。"""
         d = {}
         for s in self.shards():
             z = np.load(s)

@@ -1,4 +1,5 @@
-"""Swing-simulation views (method: OctantSpecs octantvector/swing.md; the simulation is octantvector.generation.swing)."""
+"""スイングのシミュレーションのビュー（方法は OctantSpecs octantvector/swing.md。シミュレーションは
+octantvector.generation.swing）。"""
 import numpy as np
 
 from ...common import charts
@@ -10,9 +11,9 @@ from .base import DerivedEncoder, Encoder, register
 
 @register
 class SwingFlow(Encoder):
-    """Interpretable swing-simulation features of every Standard chart. The simulation models two sabers and
-    Standard play, so other play styles get no vector until a simulation is validated for them. A chart with more than
-    `max_notes` notes gets none either: the simulation of a 500,000-note chart does not finish."""
+    """すべての Standard の譜面の、読み取れるスイングのシミュレーションの特徴。シミュレーションは 2 本のセーバーと
+    Standard の遊び方を前提にしているので、ほかのプレイスタイルは、そのためのシミュレーションを確かめるまで
+    ベクトルを持たない。ノーツが `max_notes` を超える譜面も持たない: 50 万ノーツの譜面のシミュレーションは終わらない。"""
     kind = "zip"
     id = "swing_flow"
     version = "12"
@@ -34,7 +35,7 @@ class SwingFlow(Encoder):
                 "swing": self.P}
 
     def embed_zip(self, mz):
-        """-> {chart key: features} for every Standard chart with enough notes and at most max_notes."""
+        """-> ノーツが足りて max_notes 以下のすべての Standard の譜面の {譜面のキー: 特徴}。"""
         out = {}
         for d, ch in standard_charts(mz):
             if len(ch.notes) > self.max_notes:
@@ -46,7 +47,7 @@ class SwingFlow(Encoder):
 
 
 class _SwingTags(DerivedEncoder):
-    """Shared by the tag views derived from `swing_flow`; `group` picks the fine tags (style.load_rules)."""
+    """`swing_flow` から派生するタグのビューで共通。`group` で細かいタグを選ぶ（style.load_rules）。"""
     inputs = ("view:swing_flow", "file:swing_model")
     group = None
     learned = False
@@ -62,14 +63,14 @@ class _SwingTags(DerivedEncoder):
                 "model": style.model_hash(self.path) if self.path and self.path.exists() else None}
 
     def derive(self, store_root, device="cpu"):
-        # checked before the store is opened: without the model, params() would record "model": None there
+        # ストアを開く前に確かめる: モデルがないと、params() はそこに "model": None を記録してしまう
         if not self.path or not self.path.exists():
             raise GenerationError(f"{self.id} needs a style model: run `octantvector swing-train` and set swing_model "
                                   "(https://github.com/BeatOctant/OctantSpecs/blob/main/octantvector/config.md)")
         self.model = style.load_model(self.path)
         return super().derive(store_root, device)
 
-    def values(self, X, device="cpu"):  # row by row: quantiles and weights come from the model, not from X
+    def values(self, X, device="cpu"):  # 行ごと: 分位点と重みはモデルから取り、X からは取らない
         S, _ = style.fine_tags(self.model, X, self.rules)
         if self.learned:
             S = np.c_[np.nan_to_num(style.learned_probs(self.model, X), nan=0.0), S]
@@ -78,9 +79,8 @@ class _SwingTags(DerivedEncoder):
 
 @register
 class SwingStyle(_SwingTags):
-    """Play-style tags from `swing_flow`: probability of each BeatSaver style tag (learned) followed by the score of
-    each fine tag (0..1) that is not about walls or bombs. Needs the model file from `octantvector swing-train`
-    (setting `swing_model`)."""
+    """`swing_flow` からのプレイスタイルのタグ: BeatSaver のスタイルタグごとの確率（学習）と、それに続いて、壁や爆弾に
+    関わらない細かいタグごとの点（0..1）。`octantvector swing-train` のモデルのファイルが要る（設定 `swing_model`）。"""
     id = "swing_style"
     version = "13"
     group = "style"
@@ -89,8 +89,8 @@ class SwingStyle(_SwingTags):
 
 @register
 class SwingHazards(_SwingTags):
-    """Wall and bomb tags from `swing_flow` (art / workout / rhythm walls, art / dodge / rhythm bombs, ...): the
-    score of each (0..1). Kept apart from `swing_style` so recommendations can weigh them separately."""
+    """`swing_flow` からの壁と爆弾のタグ（アートの壁 / ワークアウトの壁 / リズムの壁、アートの爆弾 / 避ける爆弾 /
+    リズムの爆弾 など）: それぞれの点（0..1）。推薦で別々に重みを付けられるよう、`swing_style` とは分けている。"""
     id = "swing_hazards"
     version = "10"
     group = "hazards"

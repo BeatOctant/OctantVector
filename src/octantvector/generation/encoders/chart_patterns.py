@@ -1,14 +1,14 @@
-"""Pattern statistics of every chart (each difficulty of each characteristic), read by swing/chart.py (beatmap
-formats v2, v3 and v4: times through the chart's BPM changes, Noodle and Mapping Extensions positions, objects the
-player cannot touch left out). Rotation events are ignored. The statistics mean different things for different play
-styles (one saber, no arrows, rotation); search only compares charts of the same play style (charts.py)."""
+"""すべての譜面（各 characteristic の各難易度）のパターンの統計。読み込みは swing/chart.py（譜面の形式 v2、v3、v4:
+時刻は譜面の BPM の変化をたどり、Noodle と Mapping Extensions の位置を使い、プレイヤーが触れられない物は外す）。
+回転のイベントは無視する。統計の意味はプレイスタイル（片手、矢印なし、回転）ごとに違う。検索は同じプレイスタイルの
+譜面どうしだけを比べる（charts.py）。"""
 import numpy as np
 
 from ...common import charts
 from ..swing.chart import beatmaps, bpm_of, parse
 from .base import Encoder, register
 
-GAPS = (0.126, 0.26, 0.51, 1.01)  # same-hand gap thresholds in beats (~1/8, 1/4, 1/2, 1)
+GAPS = (0.126, 0.26, 0.51, 1.01)  # 同じ手の間隔のしきい値（拍。約 1/8、1/4、1/2、1）
 NAMES = (["nps", "njs", "bomb_ps", "wall_ps", "wall_time_frac", "arc_ps", "chain_ps", "red_frac", "double_frac",
           "dot_frac", "up_down_frac", "horiz_frac", "diag_frac", "same_dir_repeat", "angle_change_mean", "flip180_frac",
           "x_spread", "y_mean", "outer_lane_frac", "top_row_frac", "bottom_row_frac", "crossover_frac",
@@ -17,8 +17,7 @@ NAMES = (["nps", "njs", "bomb_ps", "wall_ps", "wall_time_frac", "arc_ps", "chain
 
 
 def pattern_features(chart):
-    """Feature vector (len(NAMES),) for one parsed difficulty (swing/chart.py Chart), or None if it has fewer than
-    16 colour notes."""
+    """読み込んだ 1 つの難易度（swing/chart.py の Chart）の特徴ベクトル (len(NAMES),)。色ノーツが 16 個未満なら None。"""
     if len(chart.notes) < 16:
         return None
     notes = sorted(chart.notes, key=lambda n: n.b)
@@ -43,9 +42,9 @@ def pattern_features(chart):
                     ch = abs((a1 - a0 + 180) % 360 - 180)
                     angs.append(ch); flips.append(ch >= 135)
             repeats += list((dd[1:] == dd[:-1]) & (dd[1:] != 8))
-        cross += list((xx >= 2) if col == 0 else (xx <= 1))  # red on the right half / blue on the left
+        cross += list((xx >= 2) if col == 0 else (xx <= 1))  # 赤が右半分 / 青が左半分
     gaps = np.array(gaps) if gaps else np.array([1.0])
-    hist = np.histogram(sec, bins=max(int(span // 4), 1))[0] / 4.0  # notes/s in 4 s windows
+    hist = np.histogram(sec, bins=max(int(span // 4), 1))[0] / 4.0  # 4 秒の窓でのノーツ数/秒
     v = [len(notes) / span, chart.njs, len(bombs) / span, len(walls) / span, sum(w[1] for w in walls) / span,
          chart.arcs / span, chart.chains / span, float(np.mean(c == 0)), double,
          np.mean(d == 8), np.mean(np.isin(d, (0, 1))), np.mean(np.isin(d, (2, 3))), np.mean(np.isin(d, (4, 5, 6, 7))),
@@ -63,7 +62,7 @@ def pattern_features(chart):
 class ChartPatterns(Encoder):
     kind = "zip"
     id = "chart_patterns"
-    version = "3"  # 3: read by swing/chart.py (BPM changes, Noodle / Mapping Extensions, untouchable objects left out)
+    version = "3"  # 3: swing/chart.py で読む（BPM の変化、Noodle / Mapping Extensions、触れられない物を外す）
     rows = "charts"
     inputs = ("chart",)
     names = NAMES
@@ -73,14 +72,14 @@ class ChartPatterns(Encoder):
         return {"charts": "every chart", "features": list(self.names)}
 
     def embed_zip(self, mz):
-        """-> {chart key: features} for every chart with enough notes."""
+        """-> ノーツが足りるすべての譜面の {譜面のキー: 特徴}。"""
         out, first_error = {}, None
         for c, d, fn, njs in beatmaps(mz.info):
             if self.play_styles and charts.play_style(c) not in self.play_styles:
                 continue
             try:
                 v = pattern_features(parse(mz.json(fn), bpm_of(mz.info), njs))
-            except Exception as ex:  # one broken chart leaves the others usable
+            except Exception as ex:  # 壊れた譜面が 1 つあっても、ほかは使える
                 first_error = first_error or ex
                 continue
             if v is not None:

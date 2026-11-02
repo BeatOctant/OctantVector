@@ -1,14 +1,12 @@
-"""What a hand (手札) may say, checked without the runtime (OctantSpecs plans/presets.md §8). The runtime lists and
-expands hands with it (runtime/presets.py), and generation refuses a hand the runtime would leave out before it is
-written into a DB (generation/dbrelease.py). `views` is {view key: role} and `genres` the DB's genre words."""
+"""手札が何を言ってよいか。推薦側なしで確かめる（契約1）ので、DB を作る側と推薦側が同じ手札を受け入れる。
+`views` は {ビューのキー: 役割}、`genres` は DB のジャンルの語。"""
 import numbers
 
 from .params import AIMS, DEFAULTS, why_invalid
 
 
 def is_text(value):
-    """A shown text: a non-empty string, or {language: non-empty string} with at least one language (OctantSpecs
-    plans/presets.md, 多言語化 2026-10-11). It is passed through as is; OctantPath picks the language it shows."""
+    """表示する文字: 空でない文字列か、言語が 1 つ以上ある {言語: 空でない文字列}。そのまま渡す。"""
     if isinstance(value, str):
         return bool(value)
     return (isinstance(value, dict) and bool(value)
@@ -16,10 +14,10 @@ def is_text(value):
 
 
 def view_keys(name, views):
-    """The view keys a weight's name stands for: the view itself (id@version) or every version of a view id the DB
-    has (a bare id, so a hand that names one embedding survives a new version of it). A role is a label, not a name
-    a hand can use (2026-10-14): which views a DB has is its maker's choice, so a hand says which views it means.
-    `views` holds the DB's view keys; [] when the DB has none of them."""
+    """重みの名前が指すビューのキー: ビューそのもの（id@version）か、DB にあるビューの id のすべての版（版のない id。
+    1 つの埋め込みを名指す手札が、その新しい版でも生き残るように）。役割はラベルで、手札が使える名前ではない: DB が
+    どのビューを持つかは作り手が決めるので、手札はどのビューのことかを自分で言う。
+    `views` は DB のビューのキー。どれもなければ []。"""
     if name in views:
         return [name]
     return [k for k in views if k.split("@")[0] == name]
@@ -71,13 +69,13 @@ def _params(value, views, genres):
     unknown = sorted(set(value) - set(DEFAULTS))
     if unknown:
         return f"unknown params {unknown}"
-    # A DB carries hands, so their values are checked like a request's (a runaway value must not come from a DB)
+    # DB は手札を運ぶので、その値も要求と同じく確かめる（暴走する値が DB から来てはならない）
     return why_invalid(value)
 
 
 def _hand_ids(value, views, genres):
-    """The hands a mixed hand draws from: two or more distinct ids. Whether each one is in the list, and can be
-    served, is checked against the whole list (why_not_mixing), not here."""
+    """ミックスの手札が引く手札: 2 つ以上の異なる id。それぞれが一覧にあって出せるかは、ここではなく一覧全体で
+    確かめる（why_not_mixing）。"""
     if not isinstance(value, list) or len(value) < 2:
         return "hands is not a list of two or more hand ids"
     if not all(isinstance(h, str) and h for h in value):
@@ -87,16 +85,15 @@ def _hand_ids(value, views, genres):
     return None
 
 
-# Handlings this OctantVector knows: {handling: {knob: (check, contract 1 (OctantCompass/OctantHarvest to OctantVector) condition it becomes)}}.
-#   near              rank by the weighted views around the seed (or the history without one); without a seed,
-#                     `genreFrom` picks the word of the list the liked maps are closest to and keeps its maps.
-#                     `all` in place of `weights`: two or more views with weights, each of which the map must be
-#                     close in (recommend ranks by the lowest percentile: "close in this and in that")
-#   narrow_then_rank  keep the maps closest by `narrow`, then rank them by `rank` (recommend's `narrow` condition)
-#   mixed             one list drawn from the hands named in `hands` (ids of other hands in the same list, not mixed
-#                     ones), each hand's share of the places set by the player's reactions to its earlier drafts
-#                     (recommend's `mix` condition; spikes/2026-10-29-preset-reactions). The seed, the difficulty and
-#                     the params of the request reach every hand; a hand's own knobs fill what the request leaves out
+# この OctantVector が知る扱い方: {扱い方: {つまみ: (確かめる関数, それがなる契約1 の条件)}}。
+#   near              起点（なければ履歴）のまわりを重み付きのビューで並べる。起点がなければ、`genreFrom` は一覧の
+#                     語のうち好意のマップが一番近い語を選び、その語のマップを残す。
+#                     `weights` の代わりの `all`: 重み付きの 2 つ以上のビューで、マップはどれでも近いこと（recommend
+#                     は一番低い百分位で並べる:「これでもあれでも近い」）
+#   narrow_then_rank  `narrow` で一番近いマップを残し、`rank` で並べる（recommend の `narrow` の条件）
+#   mixed             `hands` で名指した手札（同じ一覧のほかの手札の id。ミックスの手札は不可）から 1 つの一覧を
+#                     引く。各手札の枠の割合は、それまでの下見へのプレイヤーの反応で決まる（recommend の `mix` の
+#                     条件）。要求の起点、難易度、params はどの手札にも届き、要求が空けたところを手札のつまみが埋める
 HANDLINGS = {
     "near": {"weights": (_views, "weights"), "all": (_view_groups, "all"), "difficulty": (_difficulty, "difficulty"), "genre": (_genre, "genre"),
              "genreFrom": (_genre_from, "genreFrom"), "params": (_params, "params")},
@@ -105,11 +102,11 @@ HANDLINGS = {
     "mixed": {"hands": (_hand_ids, "mix"), "difficulty": (_difficulty, "difficulty"), "params": (_params, "params")},
 }
 REQUIRED_KNOBS = {"narrow_then_rank": ("narrow", "rank"), "mixed": ("hands",)}
-EITHER_KNOBS = (("weights", "all"),)  # knobs a hand has one of at most (also one condition slot: presets._expand)
-CHOICE_KNOBS = ("genre", "difficulty")  # knobs a choice input can fill (one value each)
+EITHER_KNOBS = (("weights", "all"),)  # 手札が多くても 1 つしか持たないつまみ（条件の枠も 1 つ: presets._expand）
+CHOICE_KNOBS = ("genre", "difficulty")  # 選択の入力が埋められるつまみ（どれも値は 1 つ）
 
 def inputs(hand, views, genres):
-    """(inputs as listed, with choice options filled and filtered, or None) and the reason when None."""
+    """(一覧に出す入力。選択肢は埋めて絞る。または None) と、None のときの理由。"""
     knobs = HANDLINGS[hand["handling"]]
     out = []
     for item in hand.get("inputs", []):
@@ -130,7 +127,7 @@ def inputs(hand, views, genres):
                                    if isinstance(o, dict) and knobs[name][0](o.get("value"), views, genres) is None
                                    and ("label" not in o or is_text(o["label"]))]
             elif name == "genre":
-                # The DB declares no display names for its genre words yet; show the word itself.
+                # DB はまだジャンルの語の表示名を宣言しない。語そのものを出す。
                 item["options"] = [{"value": g, "label": g} for g in sorted(genres)]
             if not item.get("options"):
                 if item.get("optional"):
@@ -138,14 +135,14 @@ def inputs(hand, views, genres):
                 return None, f"choice {name!r} has no option this DB can serve"
         elif kind != "seed":
             if item.get("optional"):
-                continue  # an input this OctantVector cannot fill: left out of an optional place
+                continue  # この OctantVector が埋められない入力: 省ける枠からは外す
             return None, f"input kind {kind!r} is unknown"
         out.append(item)
     return out, None
 
 
 def why_not(hand, views, genres):
-    """None when the hand can be served by this DB (`views`: {view key: role}, `genres`: the words), else why not."""
+    """手札をこの DB で出せるなら None（`views`: {ビューのキー: 役割}、`genres`: 語）。出せなければその理由。"""
     if not isinstance(hand, dict):
         return "not an object"
     if not isinstance(hand.get("id"), str) or not hand["id"]:
@@ -176,16 +173,16 @@ def why_not(hand, views, genres):
 
 
 def needs_seed(hand, views, genres):
-    """True when the hand cannot be asked without a seed (a seed input that is not optional)."""
+    """起点なしでは頼めない手札（省けない起点の入力がある）なら True。"""
     listed = inputs(hand, views, genres)[0] or []
     return any(item["kind"] == "seed" and not item.get("optional") for item in listed)
 
 
 def why_not_mixing(hand, served, views, genres):
-    """None when a mixed hand can draw from every hand it names, else why not. `served`: {id: hand} of the hands of
-    the same list that passed why_not. A named hand must be there and not be mixed itself (one level: the reactions
-    are recorded per hand, so a mix of mixes would have no reactions of its own to learn from); when the mixed hand
-    can be asked without a seed, so must every hand it names, or that hand could not be asked."""
+    """ミックスの手札が名指すどの手札からも引けるなら None。引けなければその理由。`served`: 同じ一覧のうち why_not を
+    通った手札の {id: 手札}。名指す手札はそこにあり、それ自体がミックスでないこと（1 段だけ: 反応は手札ごとに記録
+    するので、ミックスのミックスには学べる反応がない）。ミックスの手札が起点なしで頼めるなら、名指す手札もどれも
+    そうであること（でないとその手札を頼めない）。"""
     if hand.get("handling") != "mixed":
         return None
     for name in hand["knobs"]["hands"]:
@@ -202,7 +199,7 @@ def why_not_mixing(hand, served, views, genres):
 
 
 def check_hands(hands, views, genres):
-    """{index or id: reason} for every hand that would be left out (and duplicate ids)."""
+    """外れる手札（と重なる id）ごとの {添字か id: 理由}。"""
     out, seen, served = {}, set(), {}
     for n, hand in enumerate(hands):
         why = why_not(hand, views, genres)
@@ -214,7 +211,7 @@ def check_hands(hands, views, genres):
         else:
             served[key] = hand
         seen.add(key)
-    for hand in hands:  # a mixed hand draws from the hands that passed, wherever they are in the list
+    for hand in hands:  # ミックスの手札は、一覧のどこにあっても通った手札から引く
         if isinstance(hand, dict) and hand.get("handling") == "mixed" and hand.get("id") not in out:
             why = why_not_mixing(hand, served, views, genres)
             if why:

@@ -71,8 +71,10 @@ def test_urls_and_a_newer_schema(world, tmp_path, signed):
     _, _, _, base = world
     signed(base)
     idx = json.loads(index.build([base], tmp_path / "pub", 1900, "https://example.org/db/").read_text())
-    assert idx["entries"][0]["parts"][0]["url"] == "https://example.org/db/2026.10.02.full.tar.part000"
-    idx["entries"][0]["schemaVersion"] = "2.0"  # a host that reads only 1.x keeps what it has
+    # one part only: no .part000, the same name as the tar pack() hands over
+    assert [p["url"] for p in idx["entries"][0]["parts"]] == ["https://example.org/db/2026.10.02.full.tar"]
+    assert sorted(p.name for p in (tmp_path / "pub").iterdir()) == ["2026.10.02.full.tar", "2026.10.02.full.tar.done", "index.json"]
+    idx["entries"][0]["schemaVersion"] = "3.0"  # a host that reads only 2.x keeps what it has
     assert update.plan_update(idx, "2026.10.01") == []
     for bad in ({**idx, "indexVersion": "2.0"}, {k: v for k, v in idx.items() if k != "indexVersion"}):
         with pytest.raises(VersionError, match="indexVersion"):  # an index this OctantVector cannot read says so

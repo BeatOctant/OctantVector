@@ -1,23 +1,22 @@
-"""The signature of a published DB version (OctantSpecs contracts/, 契約5（OctantHarvest to OctantCompass）署名).
+"""公開した DB の版の署名（OctantSpecs contracts/、契約5（OctantHarvest to OctantCompass）署名）。
 
-The signed bytes are manifest.json read as JSON and canonicalised with JCS (RFC 8785), so its indentation and line
-ends do not matter. The signature is Ed25519 and lives next to it in manifest.sig:
+署名するバイト列は manifest.json を JSON として読み、JCS（RFC 8785）で正規化したものなので、字下げや改行は
+関係ない。署名は Ed25519 で、隣の manifest.sig に置く:
 
-  {"algorithm": "Ed25519", "keyId": <first 16 hex of the SHA-256 of the 32-byte public key>,
-   "signature": <base64 of the 64-byte signature>}
+  {"algorithm": "Ed25519", "keyId": <32 バイトの公開鍵の SHA-256 の先頭 16 桁の 16 進>,
+   "signature": <64 バイトの署名の base64>}
 
-manifest.sig is never listed in the manifest's files. The public keys accepted are bundled in trusted_keys.py.
+manifest.sig はマニフェストの files に載せない。受け入れる公開鍵は trusted_keys.py に同梱する。
 
-  keygen(path)          a new private key written to `path` (never overwritten) -> (public key base64, keyId)
-  sign(folder, key)     manifest.sig written into `folder` with the private key file `key` -> its path
-  inspect(folder, trust) who signed manifest.json -> {"status", "keyId", "detail"}; never raises. status is
-                        "signed" (by a bundled key or one in trust["keys"], {keyId: public key base64}),
-                        "unsigned", "malformed", "unknownKey" or "mismatch"
+  keygen(path)          新しい秘密鍵を `path` に書く（上書きはしない）-> (公開鍵の base64, keyId)
+  sign(folder, key)     秘密鍵のファイル `key` で `folder` に manifest.sig を書く -> そのパス
+  inspect(folder, trust) manifest.json に誰が署名したか -> {"status", "keyId", "detail"}。例外は投げない。status は
+                        "signed"（同梱の鍵か trust["keys"]（{keyId: 公開鍵の base64}）の鍵による）、
+                        "unsigned"、"malformed"、"unknownKey"、"mismatch" のどれか
 
-On the host the signature names the author; it does not block. apply_update warns (SignatureWarning) on anything but
-"signed" and still uses the version: a DB is data and runs no code, and the files are checked against the
-index's SHA-256 either way (2026-10-11). The author's side is stricter: build_index (generation/index.py) indexes
-a version only when it is "signed", unless allow_unsigned (development).
+ホストでは、署名は作り手を示すだけで止めはしない。apply_update は "signed" 以外なら警告し（SignatureWarning）、
+その版を使う: DB はデータでコードを動かさず、ファイルはどのみち索引の SHA-256 と照らすため。作り手の側は
+もっと厳しい: build_index（generation/index.py）は "signed" の版だけを索引に載せる（allow_unsigned は開発用）。
 """
 import base64
 import hashlib
@@ -30,7 +29,7 @@ SIG = "manifest.sig"
 
 
 class SignatureWarning(UserWarning):
-    """A DB version used although manifest.sig is missing, malformed, by an unknown key or does not match."""
+    """manifest.sig がない、壊れている、知らない鍵による、または合わないのに使った DB の版。"""
 
 
 def _canonical(folder):
@@ -53,7 +52,7 @@ def keygen(path):
     private = Ed25519PrivateKey.generate()
     pem = private.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
                                 serialization.NoEncryption())
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)  # never overwrite a key
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)  # 鍵は上書きしない
     with os.fdopen(fd, "wb") as f:
         f.write(pem)
     raw = _public_raw(private)
@@ -71,7 +70,7 @@ def sign(folder, key_path):
 
 
 def check_trust(trust):
-    """-> (keys, allow_unsigned) from apply_update's `trust` (None: the bundled keys only)."""
+    """apply_update の `trust` から (keys, allow_unsigned)（None: 同梱の鍵だけ）。"""
     from . import trusted_keys
     t = dict(trust or {})
     unknown = set(t) - {"keys", "allowUnsigned"}

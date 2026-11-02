@@ -1,14 +1,13 @@
-"""DB generation: from the crawl (contract 4 (OctantHarvest crawl to OctantVector)) through the ledger, the encoders and the working store to the
-distributed DB (contract 2 (DB build to recommendation core)) and its index (contract 5 (OctantHarvest to OctantCompass)). OctantHarvest calls it through the functions below (OctantSpecs
-contracts/engine-generation.md); OctantCompass never does.
+"""DB の生成: クロール（契約4（OctantHarvest crawl to OctantVector））から、台帳、エンコーダー、作業用ストアを経て、
+配布 DB（契約2（DB build to recommendation core））とその索引（契約5（OctantHarvest to OctantCompass））まで。
+公開する関数は OctantSpecs contracts/engine-generation.md にある。
 
-It imports `common` and never the runtime: the DB is the only thing that passes from here to the runtime
-(OctantSpecs constitution.md, principle 8; tests/test_layers.py checks this).
+`common` は import するが、推薦側は import しない: ここから推薦側に渡るのは DB だけ（OctantSpecs
+constitution.md、原則 8。tests/test_layers.py で確かめる）。
 """
 
-# the generation API's version (OctantSpecs contracts/engine-generation.md, 版の付け方): separate from the package
-# version and from the runtime's; OctantHarvest checks it before a run
-API_VERSION = "1.1"
+# 生成 API の版（OctantSpecs contracts/engine-generation.md、版の付け方）。パッケージの版とも推薦側の版とも別
+API_VERSION = "1.2"  # 1.2: release が `export` を受け取る
 
 from .api import build_index, calibrate, compute, drift, keygen, models, pack, release, sign  # noqa: E402,F401
-from .errors import GenerationError, VersionError  # noqa: E402,F401  (VersionError: an unknown crawl or DB format)
+from .errors import GenerationError, VersionError  # noqa: E402,F401  （VersionError: 知らないクロールか DB の形式）

@@ -1,13 +1,13 @@
-"""Readers for a player's own data. All functions only read the paths they are given; nothing is copied,
-uploaded or written except where the caller saves the returned values. What each signal means for labels:
-OctantSpecs octantvector/design.md. Typical sources (paths are the user's own; nothing here assumes a location):
+"""プレイヤー自身のデータを読む関数。どの関数も渡されたパスを読むだけで、呼ぶ側が戻り値を保存しない限り、
+何もコピー、アップロード、書き込みをしない。各 signal がラベルとして何を意味するかは OctantSpecs 法 4.1。
+よくある出所（パスはユーザー自身のもの。ここでは場所を決めつけない）:
 
-  votedSongs.json        BeatSaverVoting (UserData/)          read_votes
-  *.bplist               playlists (Playlists/)               read_playlists
-  PlayerData.dat         game profile (AppData/LocalLow/...)  read_player_data
-  beatsaber.db           DataRecorder (UserData/DataRecorder) read_datarecorder
-  *.bsor / *.dat         BeatLeader / ScoreSaber replays      replay_hashes (file names only)
-  CustomLevels/          installed maps                       installed_keys
+  votedSongs.json        BeatSaverVoting（UserData/）          read_votes
+  *.bplist               プレイリスト（Playlists/）            read_playlists
+  PlayerData.dat         ゲームのプロフィール（AppData/LocalLow/...） read_player_data
+  beatsaber.db           DataRecorder（UserData/DataRecorder） read_datarecorder
+  *.bsor / *.dat         BeatLeader / ScoreSaber のリプレイ    replay_hashes（ファイル名だけ）
+  CustomLevels/          入れてあるマップ                      installed_keys
 """
 import json
 import re
@@ -25,12 +25,12 @@ def _load_json(path):
 
 
 def read_votes(path) -> dict:
-    """-> {version hash: "Upvote" | "Downvote"}"""
+    """-> {版の hash: "Upvote" | "Downvote"}"""
     return {h.lower(): v["voteType"] for h, v in _load_json(path).items()}
 
 
 def read_playlists(paths) -> Counter:
-    """-> Counter of version hashes over the given .bplist files."""
+    """-> 渡した .bplist のファイルでの、版の hash の Counter。"""
     c = Counter()
     for p in paths:
         for s in _load_json(p).get("songs", []):
@@ -40,7 +40,7 @@ def read_playlists(paths) -> Counter:
 
 
 def read_player_data(path):
-    """-> (favourite hashes, {hash: total playCount}, {hash: number of difficulties with a valid score})."""
+    """-> (お気に入りの hash, {hash: playCount の合計}, {hash: 有効なスコアのある難易度の数})。"""
     pd = _load_json(path)["localPlayers"][0]
     fav = {lid[13:53].lower() for lid in pd.get("favoritesLevelIds", []) if lid.startswith("custom_level_")}
     plays, cleared = Counter(), Counter()
@@ -53,15 +53,15 @@ def read_player_data(path):
 
 
 def read_datarecorder(db_path) -> list:
-    """DataRecorder SQLite (opened read-only, immutable) -> one dict per play of a custom level:
-    hash, outcome ("finished" | "failed" | "quit"), difficulty, mode, speed."""
+    """DataRecorder の SQLite（読み取り専用、immutable で開く）-> カスタムのレベルのプレイごとに dict を 1 つ:
+    hash、結果（"finished" | "failed" | "quit"）、difficulty、mode、speed。"""
     con = sqlite3.connect(f"file:{Path(db_path).resolve()}?mode=ro&immutable=1", uri=True)
     out = []
     for h, cleared, diff, mode, speed in con.execute(
             "select songHash, cleared, difficulty, mode, songSpeedMultiplier from MovieCutRecord "
             "where songHash is not null and songHash != ''"):
         if not HASH_RE.fullmatch(h or ""):
-            continue  # built-in levels
+            continue  # 組み込みのレベル
         outcome = {"finished": "finished", "failed": "failed", "softFail": "failed"}.get(cleared, "quit")
         out.append({"hash": h.lower(), "outcome": outcome, "diff": difficulty(diff), "mode": mode,
                     "speed": float(speed) if speed not in (None, "None") else 1.0})
@@ -70,7 +70,7 @@ def read_datarecorder(db_path) -> list:
 
 
 def replay_hashes(folder) -> Counter:
-    """Version hashes found in replay file names (BeatLeader .bsor, ScoreSaber .dat); files are not opened."""
+    """リプレイのファイル名（BeatLeader の .bsor、ScoreSaber の .dat）にある版の hash。ファイルは開かない。"""
     c = Counter()
     for f in Path(folder).iterdir():
         m = HASH_RE.search(f.name)
@@ -80,13 +80,13 @@ def replay_hashes(folder) -> Counter:
 
 
 def installed_keys(custom_levels) -> set:
-    """BeatSaver keys of installed maps (folder names "<key> (<title> - <mapper>)")."""
+    """入れてあるマップの BeatSaver の key（フォルダ名 "<key> (<title> - <mapper>)"）。"""
     return {f.name.split(" ")[0] for f in Path(custom_levels).iterdir() if f.is_dir()}
 
 
 def build_signals(votes=None, playlists=None, player_data=None, plays=None, replays=(), installed=None, key_to_hash=None):
-    """Combine the readers' outputs into {version hash: {signal: count}}. Signals: upvote, downvote, playlist,
-    favorite, pd_playcount, pd_cleared, play, finished, failed, quit, replay, installed."""
+    """各関数の出力を {版の hash: {signal: 数}} にまとめる。signal: upvote、downvote、playlist、favorite、
+    pd_playcount、pd_cleared、play、finished、failed、quit、replay、installed。"""
     sig = defaultdict(Counter)
     for h, t in (votes or {}).items():
         sig[h]["upvote" if t == "Upvote" else "downvote"] += 1
@@ -116,8 +116,8 @@ INTERACTION = ("installed", "play", "replay", "pd_playcount", "favorite", "upvot
 
 
 def merge_by_key(sig, meta, pool_hash_of_key):
-    """Merge signals of all versions of a map onto its pool version hash -> {pool hash: Counter}.
-    meta: catalogue.load_meta output (hash -> {key, ...}); pool_hash_of_key: {key: pool hash}."""
+    """マップのすべての版の signal を、そのマップのプールの版の hash にまとめる -> {プールの hash: Counter}。
+    meta: catalogue.load_meta の出力（hash -> {key, ...}）。pool_hash_of_key: {key: プールの hash}。"""
     out = defaultdict(Counter)
     for h, s in sig.items():
         ph = pool_hash_of_key.get(meta.get(h, {}).get("key"))

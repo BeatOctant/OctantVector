@@ -1,6 +1,6 @@
-"""Saved evaluation runs: per-query results stored together with what produced them (view id@version, fingerprint,
-weight, settings), so encoders can be compared later without recomputing. Format: JSON lines (gzip when the path
-ends in .gz); the first line is {"run": ...}, every other line one query."""
+"""保存した評価の実行: クエリごとの結果を、それを出したもの（ビューの id@version、fingerprint、重み、設定）と一緒に
+持つ。あとで計算し直さずにエンコーダーを比べられる。形式は JSON lines（パスが .gz で終われば gzip）。1 行目は
+{"run": ...}、ほかの行はクエリ 1 つずつ。"""
 import gzip
 import json
 from datetime import datetime, timezone

@@ -1,11 +1,10 @@
-"""All settings and their defaults (the single source of truth; OctantSpecs octantvector/config.md describes them).
+"""すべての設定とその既定値（正本はここ。説明は OctantSpecs octantvector/config.md）。
 
-Values come from, in order: environment variable > config file > default below. The config file is TOML,
-found at $BV_CONFIG or ./octantvector.toml, with keys named like the variables without the BV_ prefix,
-lower-case (e.g. `archive = "/path/to/archive"`).
+値は 環境変数 > 設定ファイル > 下の既定値 の順で決まる。設定ファイルは TOML で、$BV_CONFIG か
+./octantvector.toml にある。キーは変数名から BV_ を外して小文字にしたもの（例 `archive = "/path/to/archive"`）。
 
-The contract 1 (OctantHarvest to OctantVector) functions (api.py) read neither: inside `given(values)` every setting and table comes from `values`
-only (OctantSpecs contracts/, 契約1 生成側の関数). The development commands (cli.py) use the file and the environment.
+`given(values)` の中では、すべての設定と表を `values` だけから取り、ファイルも環境変数も読まない（OctantSpecs
+contracts/、契約1 生成側の関数）。
 """
 import contextvars
 import os
@@ -17,21 +16,20 @@ from pathlib import Path
 from .errors import GenerationError
 
 DEFAULTS = {
-    "archive": None,              # BV_ARCHIVE: folder with maps/<hash[:2]>/<hash>.zip and download.journal.jsonl
-    "catalogue": None,            # BV_CATALOGUE: BeatSaver catalogue snapshot (catalogue.jsonl.gz)
-    "artists": None,              # BV_ARTISTS: optional folder with map_artists.jsonl.gz and similar_artists.jsonl.gz
-                                  # (the relation view listenbrainz_artists@<YYYYMMDD>, role `artist`;
-                                  # generation/artists.py)
-    "catalogue_sha256": None,     # BV_CATALOGUE_SHA256: optional expected hash, checked by `octantvector check`
-    "store": "store",             # BV_STORE: vector store root (one sub-folder per encoder id@version)
-    "models_dir": None,           # BV_MODELS_DIR: the model files encoders read, as <models_dir>/hf/<repo>/<revision>/
-                                  # (put there by `octantharvest models`; OctantVector never downloads them)
-    "device": "auto",             # BV_DEVICE: "auto" (CUDA if available) or "cpu"
-    "workers": 12,                # BV_WORKERS: CPU worker processes for embedding
-    "worker_memory_gb": 6,        # BV_WORKER_MEMORY_GB: a worker over this much memory of its own is stopped and its map
-                                  # recorded as failed (0: no limit; Linux only)
-    "full_every": 30,             # BV_FULL_EVERY: diffs between two full releases (octantvector release)
-    "swing_model": None,          # BV_SWING_MODEL: style model file written by `octantvector swing-train`
+    "archive": None,              # BV_ARCHIVE: maps/<hash[:2]>/<hash>.zip と download.journal.jsonl のあるフォルダ
+    "catalogue": None,            # BV_CATALOGUE: BeatSaver のカタログのスナップショット（catalogue.jsonl.gz）
+    "artists": None,              # BV_ARTISTS: なくてもよい、map_artists.jsonl.gz と similar_artists.jsonl.gz のあるフォルダ
+                                  # （関係のビュー listenbrainz_artists@<YYYYMMDD>、役割 `artist`。generation/artists.py）
+    "catalogue_sha256": None,     # BV_CATALOGUE_SHA256: なくてもよい、期待する hash。`octantvector check` で確かめる
+    "store": "store",             # BV_STORE: ベクトルのストアの根（エンコーダーの id@version ごとにサブフォルダ）
+    "models_dir": None,           # BV_MODELS_DIR: エンコーダーが読むモデルのファイル。<models_dir>/hf/<repo>/<revision>/ の形
+                                  # （OctantVector はダウンロードしない）
+    "device": "auto",             # BV_DEVICE: "auto"（使えれば CUDA）か "cpu"
+    "workers": 12,                # BV_WORKERS: 埋め込みに使う CPU のワーカーのプロセス数
+    "worker_memory_gb": 6,        # BV_WORKER_MEMORY_GB: 自分の分でこれより多くのメモリを使ったワーカーは止め、そのマップを失敗として
+                                  # 記録する（0: 上限なし。Linux だけ）
+    "full_every": 30,             # BV_FULL_EVERY: 2 つの全量のリリースの間の差分の数（octantvector release）
+    "swing_model": None,          # BV_SWING_MODEL: `octantvector swing-train` が書くスタイルのモデルのファイル
 }
 
 
@@ -40,7 +38,7 @@ _GIVEN = contextvars.ContextVar("given", default=None)
 
 @contextmanager
 def given(values: dict):
-    """Settings and tables from `values` only (no file, no environment) while the block runs."""
+    """ブロックの間、設定と表を `values` だけから取る（ファイルも環境変数も読まない）。"""
     token = _GIVEN.set(dict(values))
     try:
         yield
@@ -49,7 +47,7 @@ def given(values: dict):
 
 
 def current():
-    """The values set by `given` (None outside it); passed on to worker processes."""
+    """`given` で設定した値（その外では None）。ワーカーのプロセスに渡す。"""
     return _GIVEN.get()
 
 
@@ -65,7 +63,7 @@ def _file_values():
 
 
 def section(name) -> dict:
-    """A table of the config file (e.g. [swing]); its keys and defaults are owned by the module that reads it."""
+    """設定ファイルの表 1 つ（例 [swing]）。キーと既定値は、それを読むモジュールが持つ。"""
     v = _file_values().get(name, {})
     if not isinstance(v, dict):
         raise GenerationError(f"'{name}' in the config file must be a table ([{name}])")

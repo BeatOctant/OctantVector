@@ -1,17 +1,17 @@
-"""Named pools: which current versions a computation covers. The caller names the pool (api.compute, `octantvector
-update --pool`); calibration and releases always use `distribution`. The defaults are below; the config file's
-[pools.<name>] tables (contract 1: params["pools"]) change them or add pools. Keys:
+"""名前の付いたプール: 計算がどの現行版を対象にするか。プールの名前は呼ぶ側が渡す（api.compute、`octantvector
+update --pool`）。較正とリリースはいつも `distribution`。既定は下のとおりで、設定ファイルの [pools.<name>] の表
+（契約1: params["pools"]）で変えたり足したりできる。キー:
 
-  min_upvotes  int, default 0: upvote floor
-  standard     bool, default false: only versions with a Standard chart
-  sample       int or null: keep only this many maps, the same ones every time for the same seed and catalogue
-               (ranked by sha256("<seed>:<map id>"); the map id stays with the map across its versions)
-  seed         str or int, default "octantvector"
-  include      path or null: a text file, one BeatSaver map id or version hash per line ('#' starts a comment);
-               those maps are members whenever that version is current, on top of the others
+  min_upvotes  int、既定 0: Upvote の下限
+  standard     bool、既定 false: Standard の譜面がある版だけ
+  sample       int か null: マップをこの数だけ残す。同じ seed と同じカタログなら毎回同じマップ
+               （sha256("<seed>:<map id>") の順。map id は版が変わってもマップについて回る）
+  seed         str か int、既定 "octantvector"
+  include      パスか null: 1 行に BeatSaver の map id か版の hash を 1 つ書いたテキストファイル（'#' から後は
+               コメント）。そのマップは、その版が現行である限り、ほかに加えてメンバーになる
 
-  distribution  every current version (what the distributed DB holds)
-  trial         20,000 maps sampled from every current version (trying a view without computing everything)
+  distribution  すべての現行版（配布 DB が持つもの）
+  trial         すべての現行版から抜いた 20,000 マップ（全部を計算せずにビューを試す）
 """
 import hashlib
 from pathlib import Path
@@ -38,7 +38,7 @@ def _checked(name, d):
 
 
 def load():
-    """{name: definition} with every key filled in."""
+    """すべてのキーを埋めた {name: 定義}。"""
     given = {name: {} for name in DEFAULTS}
     for name, d in config.section("pools").items():
         if not isinstance(d, dict) or set(d) - set(KEYS):
@@ -48,7 +48,7 @@ def load():
 
 
 def matches(d, m, v):
-    """The per-version filters of a definition (min_upvotes, standard); sample and include apply to the whole pool."""
+    """定義のうち版ごとの絞り込み（min_upvotes、standard）。sample と include はプール全体にかかる。"""
     return m.get("stats", {}).get("upvotes", 0) >= d["min_upvotes"] and (not d["standard"] or bool(standard_diffs(v)))
 
 
@@ -61,8 +61,7 @@ def _included(path):
 
 
 def members(d, eligible, current):
-    """Hashes of the pool. eligible: [(map id, hash)] of the current versions that pass `matches`; current: {map id:
-    hash} of every current version."""
+    """プールの hash。eligible: `matches` を通る現行版の [(map id, hash)]。current: すべての現行版の {map id: hash}。"""
     if d["sample"] is None:
         out = {h for _, h in eligible}
     else:

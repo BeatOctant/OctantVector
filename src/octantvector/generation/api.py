@@ -1,16 +1,16 @@
-"""Contract 1, generation side (OctantSpecs contracts/, 契約1（OctantHarvest to OctantVector）生成側の関数): the functions OctantHarvest calls.
+"""契約1 の生成側（OctantSpecs contracts/、契約1（OctantHarvest to OctantVector）生成側の関数）。
 
-Every input comes as an argument: the crawl (contract 4 (OctantHarvest crawl to OctantVector)) as {"archive": folder, "catalogue": catalogue.jsonl.gz}
-and optionally "artists": the folder of map_artists.jsonl.gz and similar_artists.jsonl.gz (the relation view
-listenbrainz_artists@<YYYYMMDD>, role `artist`),
-`views`, the views to compute or put in a DB: encoders by id@version (or a bare id), and the relation views built
-from the catalogue by name (RELATIONS; nothing to compute or calibrate, they only go into a release),
-the working store's folder (it holds the ledger), and `params`, the settings of OctantSpecs octantvector/config.md by
-name (numbers, `device`, `swing_model`, and the `pools`, `swing` and `swing_tags` tables). Defaults fill what
-`params` leaves out. Nothing here reads the config file or the environment, and nothing talks to the network: the
-models the encoders read are listed by `models(views)`, fetched by the caller and passed as `models_dir`.
+入力はすべて引数で受け取る: クロール（契約4（OctantHarvest crawl to OctantVector））を {"archive": フォルダ,
+"catalogue": catalogue.jsonl.gz} で、なくてもよい "artists": map_artists.jsonl.gz と similar_artists.jsonl.gz の
+フォルダ（関係のビュー listenbrainz_artists@<YYYYMMDD>、役割 `artist`）。
+`views`、計算するか DB に入れるビュー: エンコーダーは id@version（か版のない id）で、カタログから作る関係のビューは
+名前（RELATIONS。計算も較正もせず、リリースに入るだけ）で。
+作業用ストアのフォルダ（台帳を持つ）と、`params`、OctantSpecs octantvector/config.md の設定を名前で（数、`device`、
+`swing_model`、`pools`・`swing`・`swing_tags` の表）。`params` で省いたものは既定値で埋める。ここでは設定ファイルも
+環境変数も読まず、ネットワークにもつながない: エンコーダーが読むモデルは `models(views)` が一覧にし、呼ぶ側が
+取って `models_dir` として渡す。
 
-When to run them, which version to approve and where the files go are the caller's.
+いつ実行するか、どの版を承認するか、ファイルをどこに置くかは呼ぶ側が決める。
 """
 import functools
 import io
@@ -26,17 +26,17 @@ from .errors import GenerationError, VersionError
 from .ledger import Ledger
 
 PATHS = ("archive", "catalogue", "artists", "store", "models_dir")
-RELATIONS = (mappers.NAME,)  # relation views a release builds from the catalogue when `views` names them
-# the contract 4 formats this OctantVector reads (OctantSpecs contracts/, 契約の版): the catalogue capture's manifest.json
-# `schema` next to catalogue.jsonl.gz, and the archive's archive_meta.json `format`
+RELATIONS = (mappers.NAME,)  # `views` が名指したときに、リリースがカタログから作る関係のビュー
+# この OctantVector が読む契約4 の形式（OctantSpecs contracts/、契約の版）: catalogue.jsonl.gz の隣にある
+# カタログの取得の manifest.json の `schema` と、アーカイブの archive_meta.json の `format`
 CATALOGUE_SCHEMAS = ("octantharvest-beatsaver-catalogue-capture/v1",)
 ARCHIVE_FORMATS = ("beatmap-music-identity-beatsaver-archive-v2",)
 
 
 def _contract(f):
-    """A contract 1 function: a format version the generation side does not read reaches the caller as the generation
-    VersionError (a GenerationError), never as the bare dbformat one, and any other format error (a version folder
-    that is missing, broken or not signed by a known key) as a GenerationError."""
+    """契約1 の関数: 生成側の読めない形式の版は、むき出しの dbformat のものではなく生成側の VersionError（GenerationError の
+    一種）として呼ぶ側に届き、ほかの形式のエラー（版のフォルダがない、壊れている、知っている鍵で署名されていない）は
+    GenerationError として届く。"""
     @functools.wraps(f)
     def call(*args, **kwargs):
         try:
@@ -58,8 +58,8 @@ def _declared(path, key):
 
 
 def _check_input(input):
-    """VersionError unless the crawl declares formats this OctantVector reads (a capture without manifest.json is
-    incomplete and declares nothing)."""
+    """クロールがこの OctantVector の読める形式を宣言していなければ VersionError（manifest.json のない取得はそろっておらず、
+    何も宣言しない）。"""
     cat = Path(input["catalogue"]).parent / "manifest.json"
     found = _declared(cat, "schema")
     if found not in CATALOGUE_SCHEMAS:
@@ -87,13 +87,13 @@ def _values(input, store, params, models_dir=None):
 
 
 def _ids(views):
-    """`id@version` (or a bare id) -> encoder ids; a version other than the current one is refused. Views are always
-    named by the caller. The relation views (RELATIONS) are left out: they are not computed."""
+    """`id@version`（か版のない id）-> エンコーダーの id。今の版でない版は断る。ビューはいつも呼ぶ側が名指す。
+    関係のビュー（RELATIONS）は外す: 計算しないため。"""
     return _split(views)[0]
 
 
 def _split(views):
-    """-> (encoder ids, relation view names) of `views`."""
+    """-> `views` の (エンコーダーの id, 関係のビューの名前)。"""
     if not views or isinstance(views, str):
         raise GenerationError(f"views: a non-empty list of id@version is required, got {views!r}")
     out, rel = [], []
@@ -124,19 +124,19 @@ def _results(store):
 
 @_contract
 def compute(input, store, views, params=None, pool="distribution", models_dir=None, log=None):
-    """Ingest the crawl into the ledger and compute what it says is missing for `views` (and the sources of derived
-    ones, and the views the chart metrics come from: dbrelease.METRICS) over the pool `pool` (params["pools"], OctantSpecs octantvector/config.md). models_dir: the folder holding the
-    models `models(views)` lists. Resumable; a second call right after computes nothing. When the GPU has no room the
-    models take fewer maps at a time; a map that does not fit even alone is left uncomputed and unrecorded ("deferred"),
-    so the next call computes it.
-    -> {"computed": n, "failed": n, "skipped": n, "deferred": n,
-        "views": {id@version: {"ok"|"error"|"skip"|"deferred": n}}}, this call's."""
+    """クロールを台帳に取り込み、`views`（と派生のものの元、譜面の指標の元のビュー: dbrelease.METRICS）について、台帳が
+    足りないと言うものを、プール `pool`（params["pools"]、OctantSpecs octantvector/config.md）で計算する。models_dir:
+    `models(views)` が挙げるモデルを持つフォルダ。続きからやり直せ、直後にもう一度呼べば何も計算しない。GPU に空きが
+    なければ、モデルは一度に扱うマップを減らす。1 つでも入らないマップは計算も記録もせず残し（"deferred"）、次の
+    呼び出しで計算する。
+    -> この呼び出しの {"computed": n, "failed": n, "skipped": n, "deferred": n,
+        "views": {id@version: {"ok"|"error"|"skip"|"deferred": n}}}。"""
     ids = _ids(views)
-    ids += [i for i in dbrelease.metric_views() if i not in ids]  # a release fills the chart metrics from these
+    ids += [i for i in dbrelease.metric_views() if i not in ids]  # リリースはこれで譜面の指標を埋める
     with config.given(_values(input, store, params, models_dir)):
         before = _results(store)
         no_room = embed.run(config.load(), ids, pool=pool, log=log or io.StringIO())
-        rows = _results(store) - before  # results written or changed by this call
+        rows = _results(store) - before  # この呼び出しが書いたか変えた結果
     per = {}
     for _, enc, r, *_ in rows:
         per.setdefault(enc, {})[r] = per.get(enc, {}).get(r, 0) + 1
@@ -149,9 +149,9 @@ def compute(input, store, views, params=None, pool="distribution", models_dir=No
 
 @_contract
 def models(views):
-    """The models `views` read (with their sources'), for the caller to fetch into models_dir before `compute`.
-    -> [{"repo", "revision", "files": [...], "path": "hf/<repo>/<revision>"}] (each once, sorted)."""
-    with config.given({}):  # some encoders read settings as they are made; nothing here comes from the file
+    """`views` が（その元のものも）読むモデル。呼ぶ側が `compute` の前に models_dir へ取る。
+    -> [{"repo", "revision", "files": [...], "path": "hf/<repo>/<revision>"}]（どれも 1 回、並べたもの）。"""
+    with config.given({}):  # 作るときに設定を読むエンコーダーがある。ここではファイルからは何も来ない
         found = {m.key: m for i in _ids(views) for m in get(i).required_models()}
     return [{"repo": m.repo, "revision": m.revision, "files": list(m.files), "path": m.path}
             for _, m in sorted(found.items())]
@@ -159,14 +159,14 @@ def models(views):
 
 @_contract
 def drift(store, base, params=None):
-    """{view id@version: drift} of the full DB `base`'s calibration against the store's current distribution pool:
-    how far each view's mean moved, in units of the spread around the calibration mean (0 = no movement). A vector view
-    of `base` that no installed encoder computes stops it (a missing plugin must not pass unnoticed)."""
+    """全量の DB `base` の較正と、ストアの今の配布プールとの {view id@version: ずれ}: 各ビューの平均がどれだけ動いたかを、
+    較正の平均のまわりの広がりを単位にして表す（0 = 動いていない）。`base` のベクトルのビューで、入っているどの
+    エンコーダーも計算しないものがあれば止める（プラグインがないのを見過ごしてはならない）。"""
     try:
         m = json.loads((Path(base) / "manifest.json").read_text())
     except (OSError, ValueError) as ex:
         raise GenerationError(f"{base}: no readable manifest.json ({ex})") from ex
-    vec = [k for k, v in m["views"].items() if dbformat.view_kind(v) != "relation"]  # relations are given, not computed
+    vec = [k for k, v in m["views"].items() if dbformat.view_kind(v) != "relation"]  # 関係は与えられるもので、計算しない
     views = [k.split("@")[0] for k in vec]
     unknown = [k for k, i in zip(vec, views) if i not in registry()]
     if unknown:
@@ -179,8 +179,8 @@ def drift(store, base, params=None):
 
 @_contract
 def calibrate(store, views, params=None):
-    """A new calibration of `views` over the distribution pool, also saved under <store>/calibration.
-    -> the calibration (plain JSON: id, pool, created_at, views)."""
+    """配布プールでの `views` の新しい較正。<store>/calibration にも保存する。
+    -> 較正（素の JSON: id、pool、created_at、views）。"""
     with config.given(_values(None, store, params)):
         cal = calibrations.compute(store, _ids(views), _pool(store), "distribution")
         return json.loads(calibrations.save(cal, store).read_text())
@@ -188,47 +188,50 @@ def calibrate(store, views, params=None):
 
 @_contract
 def release(input, store, views, calibration, base, out, params=None, full=False, built_at=None, log=None, presets=None,
-            notice=None):
-    """The next DB version (contract 2 (DB build to recommendation core)) under the folder `out`: always the full, and the diff from `base` (the
-    previous full's folder, or None) when one is possible. views: the views to put in it (required). calibration:
-    one returned by `calibrate`, or None to keep the base's (extended with new views).
-    presets: the hands to write into the manifest (a list, or the path of a JSON file); None keeps the base's. Either
-    way they are checked against the new DB (OctantSpecs plans/presets.md §8).
-    notice: the DB's terms and credits as one Markdown text for the manifest; None keeps the base's. Each view's
-    credits come from its encoder.
-    -> {"dbVersion", "full": folder, "diff": folder or None, "published": what to approve and index}."""
+            notice=None, export=None):
+    """フォルダ `out` の下の次の DB の版（契約2（DB build to recommendation core））: いつも全量と、作れれば `base`（前の
+    全量のフォルダか None）からの差分。views: 入れるビュー（必須）。calibration: `calibrate` が返したもの。None なら
+    base のもの（新しいビューの分を広げる）。
+    presets: マニフェストに書く手札（list か JSON のファイルのパス）。None なら base のものを残す。どちらでも新しい
+    DB と照らして確かめる。
+    notice: マニフェストに書く、DB の条件とクレジットの 1 つの Markdown の文。None なら base のものを残す。各ビューの
+    クレジットはエンコーダーから来る。
+    export: 各ビューをどう書くか（{view id: {"dim": <int>, "dtype": "float16" | "int8"}}。名指さないビューはエンコーダーの
+    次元のまま float16）。None なら較正にあるものを残す。変えたら全量として出す。
+    -> {"dbVersion", "full": フォルダ, "diff": フォルダか None, "published": 承認して索引に載せるもの}。"""
     ids, rel = _split(views)
     with config.given(_values(input, store, params)):
         cal = calibrations.load_dict(json.loads(json.dumps(calibration))) if calibration is not None else None
         full_dir, diff_dir = dbrelease.release(config.load(), ids, cal, full=full,
                                                built_at=built_at, log=log or io.StringIO(), out=out, base=base,
-                                               presets=presets, notice=notice, relations=rel)
+                                               presets=presets, notice=notice, relations=rel,
+                                               export=export)
     return {"dbVersion": full_dir.name, "full": full_dir, "diff": diff_dir, "published": diff_dir or full_dir}
 
 
 @_contract
 def keygen(path):
-    """A new Ed25519 private key written to `path` (an existing file is never overwritten). -> {"publicKey": base64,
-    "keyId"}; the public key goes into OctantVector's bundled list (common/trusted_keys.py) by a release."""
+    """新しい Ed25519 の秘密鍵を `path` に書く（あるファイルは上書きしない）。-> {"publicKey": base64, "keyId"}。公開鍵は
+    リリースで OctantVector の同梱の一覧（common/trusted_keys.py）に入れる。"""
     pub, kid = signing.keygen(path)
     return {"publicKey": pub, "keyId": kid}
 
 
 @_contract
 def sign(folder, key_path):
-    """Sign the version folder `release` returned as "published" with the private key file. -> path of manifest.sig."""
-    read_manifest(folder)  # a complete, intact version only
+    """`release` が "published" として返した版のフォルダに、秘密鍵のファイルで署名する。-> manifest.sig のパス。"""
+    read_manifest(folder)  # そろっていて壊れていない版だけ
     return signing.sign(folder, key_path)
 
 
 @_contract
 def pack(folder, out):
-    """The full version folder `release` returned as "full" as one tar in the folder `out`, named
-    <dbVersion>.full.tar: what is handed over without an index (OctantSpecs contracts/distribution.md, 非公開（探求中）の扱い),
-    the same bytes as that version's file in the index before it is split. Sign the folder first (`sign`) for the
-    receiver to see the author. An existing file is never overwritten. -> path of the tar."""
+    """`release` が "full" として返した全量の版のフォルダを、フォルダ `out` に <dbVersion>.full.tar という 1 つの tar に
+    する: 索引なしで手渡しするもの（OctantSpecs contracts/distribution.md、非公開（探求中）の扱い）で、分ける前の索引の
+    その版のファイルと同じバイト列。受け取る側が作り手を見られるよう、先にフォルダに署名する（`sign`）。あるファイルは
+    上書きしない。-> tar のパス。"""
     folder = Path(folder)
-    m = read_manifest(folder, "full")  # a complete, intact full only: the receiver has nothing to apply a diff to
+    m = read_manifest(folder, "full")  # そろっていて壊れていない全量だけ: 受け取る側には差分を当てる元がない
     if folder.name != m["dbVersion"]:
         raise GenerationError(f"{folder}: the folder of {m['dbVersion']} must be named after it")
     path = Path(out) / f"{m['dbVersion']}.full.tar"
@@ -246,12 +249,12 @@ def pack(folder, out):
 
 @_contract
 def build_index(releases, out, params=None):
-    """The contract 5 (OctantHarvest to OctantCompass) index and the split files, in the folder `out`, for the approved versions `releases` (each the
-    folder `release` returned as "published"). params: part_size_mb (the largest file it writes; required, the
-    caller's setting), publish_url, trusted_keys ({keyId: public key base64} known besides the bundled ones, as
-    apply_update's trust["keys"]: the author's key when this OctantVector does not bundle it), allow_unsigned (index
-    versions whatever their signature; development). Each version indexed must be signed by a known key.
-    -> path of index.json."""
+    """承認した版 `releases`（どれも `release` が "published" として返したフォルダ）の、契約5（OctantHarvest to
+    OctantCompass）の索引と分けたファイルを、フォルダ `out` に書く。params: part_size_mb（書くファイルの最大。必須で、
+    呼ぶ側の設定）、publish_url、trusted_keys（同梱のほかに知っている {keyId: 公開鍵の base64}。apply_update の
+    trust["keys"] と同じ: この OctantVector が同梱していない作り手の鍵）、allow_unsigned（署名によらず載せる。開発用）。
+    載せる版は、どれも知っている鍵で署名されていること。
+    -> index.json のパス。"""
     p = dict(params or {})
     unknown = set(p) - {"part_size_mb", "publish_url", "trusted_keys", "allow_unsigned"}
     if unknown:

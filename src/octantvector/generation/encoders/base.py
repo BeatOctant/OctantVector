@@ -1,57 +1,53 @@
-"""Encoder interface and registry. The list of encoders and their known issues is in OctantSpecs octantvector/encoders.md.
+"""エンコーダーの型と登録簿。エンコーダーの一覧と既知の問題は OctantSpecs octantvector/encoders.md にある。
 
-Every encoder has a stable `id`, a `version` (bump whenever its output would change), a fixed `dim`, a `kind`
-and a `norm`:
-  kind "audio"   prep(y, sr) runs in CPU worker processes (picklable result); embed(prepped) runs in the
-                 main process (GPU when available) and returns a (dim,) vector, or None when the song has
-                 nothing this view describes (recorded as a skip). An encoder with `batch` > 1 gets that many
-                 maps at once in embed_many (one output each), to keep the GPU busy.
-  kind "image"   prep(data) runs in the CPU worker on the map's cover image (its file's bytes); embed(prepped) runs in
-                 the main process like an audio encoder's (with `batch` and embed_many the same way). A map without a
-                 readable cover is recorded as a skip.
-  kind "zip"     embed_zip(mapzip) runs in the CPU worker on the open map zip (generation/archive.py MapZip).
-  kind "map"     embed_map(m, v) gets the catalogue map record and version record.
-  kind "derived" derive(store_root) computes vectors from other stores.
-  norm "center"  search centres and L2-normalises the view (learned embeddings);
-  norm "zscore"  search z-scores and L2-normalises it (hand-made / interpretable features);
-  norm "none"    search only L2-normalises it (a view whose cosine is meant as it is, e.g. a one-hot category: the
-                 cosine of two maps is 1 when they share the category and 0 otherwise).
+どのエンコーダーも、変わらない `id`、`version`（出力が変わるなら上げる）、決まった `dim`、`kind`、`norm` を持つ:
+  kind "audio"   prep(y, sr) は CPU のワーカーのプロセスで走る（結果は pickle できること）。embed(prepped) はメインの
+                 プロセス（使えれば GPU）で走り、(dim,) のベクトルを返す。曲にこのビューが表すものがなければ None
+                 （skip として記録する）。`batch` が 1 より大きいエンコーダーは、GPU を休ませないよう、embed_many で
+                 その数のマップをまとめて受け取る（それぞれに 1 つの出力）。
+  kind "image"   prep(data) は CPU のワーカーで、マップのカバー画像（そのファイルのバイト列）について走る。
+                 embed(prepped) は音声のエンコーダーと同じくメインのプロセスで走る（`batch` と embed_many も同じ）。
+                 読めるカバーのないマップは skip として記録する。
+  kind "zip"     embed_zip(mapzip) は CPU のワーカーで、開いたマップの zip（generation/archive.py の MapZip）について走る。
+  kind "map"     embed_map(m, v) はカタログのマップの記録と版の記録を受け取る。
+  kind "derived" derive(store_root) はほかのストアからベクトルを計算する。
+  norm "center"  検索でビューの中心を引いて L2 正規化する（学習した埋め込み）
+  norm "zscore"  検索で z スコアにして L2 正規化する（手で作った、読み取れる特徴）
+  norm "none"    検索で L2 正規化だけする（コサインをそのままの意味で使うビュー。例 one-hot のカテゴリ: 2 つのマップの
+                 コサインは、カテゴリを共有すれば 1、しなければ 0）
 
-Each encoder also declares `inputs`, what its values depend on, so a later change of exactly those inputs is what
-triggers recomputation:
-  "audio"            the song file          "chart"          Info.dat and the difficulty files
-  "cover"            the cover image file
-  "meta:<field>"     a catalogue field      "view:<id>"      another encoder's vectors (derived encoders)
-  "file:<setting>"   a file named by a setting (e.g. a trained model)
-Which views go into a DB is the caller's (contract 1, `views`). `role` names what a view describes
-(music, chart, meta): a label the runtime uses for its defaults and filters (hands name views, never roles); it is
-written to the DB manifest and is not part of the definition (changing it needs no version bump). By default it follows the kind (ROLES); a derived view takes
-the role of its source.
+各エンコーダーは `inputs`（値が何に依るか）も宣言するので、まさにその入力が変わったときに計算し直す:
+  "audio"            曲のファイル          "chart"          Info.dat と難易度のファイル
+  "cover"            カバー画像のファイル
+  "meta:<field>"     カタログの欄          "view:<id>"      ほかのエンコーダーのベクトル（派生のエンコーダー）
+  "file:<setting>"   設定が名指すファイル（例 学習したモデル）
+どのビューを DB に入れるかは呼ぶ側が決める（契約1、`views`）。`role` はビューが何を表すか（music、chart、meta）を
+名付ける: 推薦側が既定と絞り込みに使うラベル（手札はビューを名指し、役割は名指さない）。DB のマニフェストに書き、
+定義には含めない（変えても版を上げなくてよい）。既定は kind に従う（ROLES）。派生のビューは元の役割を取る。
 
-`rows` says what one vector describes (OctantSpecs constitution.md, principle 2): "maps" (one map version, keyed by its
-hash: the song and the metadata) or "charts" (one chart, keyed by charts.key: everything computed from a chart). A
-"charts" encoder returns {chart key: vector} for a map instead of one vector (embed_zip / embed_map); a map without a
-usable chart returns an empty dict or None. `play_styles` lists the play styles it computes (None: every play style;
-charts.play_style); a chart of another play style simply gets no vector. A derived view takes its rows from its
-source (row_kind).
-Only "charts" views may describe charts in the distributed DB (dbrelease.py).
+`rows` は 1 つのベクトルが何を表すかを言う（OctantSpecs constitution.md、原則 2）: "maps"（マップの 1 つの版。キーは
+その hash: 曲とメタデータ）か "charts"（1 つの譜面。キーは charts.key: 譜面から計算するすべて）。"charts" の
+エンコーダーは、マップについて 1 つのベクトルの代わりに {譜面のキー: ベクトル} を返す（embed_zip / embed_map）。
+使える譜面のないマップは空の dict か None を返す。`play_styles` は計算するプレイスタイルの一覧（None: すべての
+プレイスタイル。charts.play_style）。ほかのプレイスタイルの譜面は、ベクトルを持たないだけ。派生のビューは行を元から
+取る（row_kind）。
+配布 DB で譜面を表してよいのは "charts" のビューだけ（dbrelease.py）。
 
-The fingerprint hashes the definition (id, version, dim, kind, params) together with the fingerprints of the source
-views, so a change anywhere upstream changes it too. The store refuses to mix fingerprints under one version.
+fingerprint は、定義（id、version、dim、kind、params）を元のビューの fingerprint と一緒にハッシュしたものなので、
+上流のどこが変わっても変わる。ストアは 1 つの版の下に違う fingerprint を混ぜない。
 
-`models` declares the model files an encoder reads (Model: a Hugging Face repo pinned to a commit). OctantVector never
-downloads them: the caller puts them under the setting `models_dir` (OctantHarvest's `octantharvest models`, from the
-contract 1 function `models(views)`), and the encoder reads them from there only (model_dir). Each model's
-repo@revision is part of the definition, so a model cannot change without the fingerprint changing.
+`models` はエンコーダーが読むモデルのファイルを宣言する（Model: コミットに固定した Hugging Face のリポジトリ）。
+OctantVector はダウンロードしない: 呼ぶ側が設定 `models_dir` の下に置き（契約1 の関数 `models(views)` から）、
+エンコーダーはそこからだけ読む（model_dir）。各モデルの repo@revision は定義の一部なので、fingerprint を変えずに
+モデルは変えられない。
 
-`credits` lists what the view owes its sources (a model, ported code, a data set) as plain-text lines: what it is,
-by whom, where, on what terms. The release writes them, with those of the stem and the source views (all_credits),
-into the view's entry of the DB manifest, so the credits travel with the view (contract 2). Like `role`, they are
-not part of the definition: changing them needs no version bump. A view built from BeatSaver's data alone needs none
-(the DB's own notice credits BeatSaver).
+`credits` は、ビューが出所（モデル、移したコード、データセット）に負うものを素の文の行で挙げる: 何か、誰のものか、
+どこにあるか、どの条件か。リリースはそれを、ステムと元のビューのもの（all_credits）と一緒に DB のマニフェストの
+そのビューの項目に書くので、クレジットはビューと一緒に運ばれる（契約2）。`role` と同じく定義には含めない: 変えても
+版を上げなくてよい。BeatSaver のデータだけから作るビューには要らない（DB 自体の表記が BeatSaver を挙げる）。
 
-Plugins (other packages) register encoders the same way through the entry-point group `octantvector.encoders`, using
-only `octantvector.plugin`; a plugin built for another PLUGIN_API is not loaded (load_plugins).
+プラグイン（ほかのパッケージ）も、エントリーポイントのグループ `octantvector.encoders` から、`octantvector.plugin`
+だけを使って同じようにエンコーダーを登録する。別の PLUGIN_API 向けに作ったプラグインは読み込まない（load_plugins）。
 """
 import hashlib
 import json
@@ -69,13 +65,13 @@ REGISTRY = {}
 INPUT_KINDS = ("audio", "cover", "chart", "meta:", "view:", "file:")
 NORMS = ("center", "zscore", "none")
 PLUGIN_GROUP = "octantvector.encoders"
-# the unstable plugin API (octantvector.plugin): any change to what it exports bumps it, and a plugin declaring another
-# number is not loaded
-PLUGIN_API = "0.3"  # 0.2: Encoder.credits; 0.3: ImageEncoder, norm "none"
-PLUGIN_ERRORS = {}  # entry-point name -> why that plugin's encoders are not registered
-PLUGINS = set()  # entry-point names of the plugins whose encoders are registered
+# 不安定なプラグインの API（octantvector.plugin）: 公開するものを変えたら上げる。別の番号を宣言するプラグインは
+# 読み込まない
+PLUGIN_API = "0.3"  # 0.2: Encoder.credits。0.3: ImageEncoder、norm "none"
+PLUGIN_ERRORS = {}  # エントリーポイントの名前 -> そのプラグインのエンコーダーを登録しない理由
+PLUGINS = set()  # エンコーダーを登録したプラグインの、エントリーポイントの名前
 ROLES = {"audio": "music", "image": "cover", "zip": "chart", "map": "meta"}
-_staged = None  # while a plugin module is imported: the classes it registers, committed only if its API matches
+_staged = None  # プラグインのモジュールを import しているあいだ: それが登録するクラス。API が合うときだけ確定する
 _plugins_loaded = False
 
 
@@ -85,8 +81,8 @@ def _plain(name):
 
 @dataclass(frozen=True)
 class Model:
-    """Model files an encoder reads: `files` of the Hugging Face repo `repo` at the commit `revision`, kept in
-    <models_dir>/hf/<repo>/<revision>/ (path)."""
+    """エンコーダーが読むモデルのファイル: Hugging Face のリポジトリ `repo` のコミット `revision` の `files`。
+    <models_dir>/hf/<repo>/<revision>/ に置く（path）。"""
     repo: str
     revision: str
     files: tuple
@@ -100,7 +96,7 @@ class Model:
         return f"hf/{self.repo}/{self.revision}"
 
     def check(self):
-        """-> why this declaration is unusable, or None. The repo and files become folder and file names."""
+        """-> この宣言が使えない理由。使えれば None。repo と files はフォルダとファイルの名前になる。"""
         parts = self.repo.split("/") if isinstance(self.repo, str) else []
         if len(parts) != 2 or not all(map(_plain, parts)):
             return f"repo must be 'owner/name', got {self.repo!r}"
@@ -139,9 +135,9 @@ def register(cls):
 
 
 def load_plugins(eps=None):
-    """Import the modules other packages name under the entry-point group `octantvector.encoders`. What a module
-    registers while it is imported is kept only if the module declares OCTANTVECTOR_PLUGIN_API == PLUGIN_API. A plugin
-    that fails is recorded in PLUGIN_ERRORS, not raised, so the other views keep working; get() names it."""
+    """ほかのパッケージがエントリーポイントのグループ `octantvector.encoders` に挙げるモジュールを import する。モジュールが
+    import のあいだに登録したものは、OCTANTVECTOR_PLUGIN_API == PLUGIN_API を宣言するときだけ残す。失敗したプラグインは
+    例外を投げずに PLUGIN_ERRORS に記録するので、ほかのビューは動き続ける。get() がそれを名指す。"""
     global _staged
     if eps is None:
         from importlib.metadata import entry_points
@@ -160,7 +156,7 @@ def load_plugins(eps=None):
             _staged = None
         api = getattr(module, "OCTANTVECTOR_PLUGIN_API", None)
         if api != PLUGIN_API:
-            # imported before (directly, not through here): what it registered then went straight to REGISTRY
+            # 前に import された（ここを通らずに直接）: そのとき登録したものは、そのまま REGISTRY に入った
             for i in [i for i, c in REGISTRY.items() if _from(c, module)]:
                 del REGISTRY[i]
             PLUGIN_ERRORS[ep.name] = (f"{ep.value} is built for plugin API {api!r}, this OctantVector has {PLUGIN_API!r}"
@@ -177,8 +173,8 @@ def _from(cls, module):
 
 
 def registry():
-    """REGISTRY with the plugins loaded (on first use, not at import: a plugin imports octantvector.plugin, which
-    imports this package, so loading plugins while it is being imported would find it half-made)."""
+    """プラグインを読み込んだ REGISTRY（import のときではなく初めて使うときに読み込む: プラグインは octantvector.plugin を
+    import し、それがこのパッケージを import するので、import の途中で読み込むと作りかけのものを見つけてしまう）。"""
     global _plugins_loaded
     if not _plugins_loaded:
         _plugins_loaded = True
@@ -187,15 +183,15 @@ def registry():
 
 
 def plugin_errors():
-    """'' or why some plugins are not loaded, to add to a message about a missing view."""
+    """'' か、読み込めなかったプラグインがある理由。ビューがないというメッセージに足す。"""
     if not PLUGIN_ERRORS:
         return ""
     return "; plugins not loaded: " + "; ".join(f"{n} ({why})" for n, why in sorted(PLUGIN_ERRORS.items()))
 
 
 def not_provided():
-    """What to add to a message about a view id no registered encoder has: the plugins that are loaded (none when the
-    plugin that provides it is not installed, e.g. one built for another OctantVector version) and why others are not."""
+    """登録したどのエンコーダーも持たないビューの id についてのメッセージに足すもの: 読み込んだプラグイン（それを出す
+    プラグインが入っていなければなし。例 別の OctantVector の版向けに作ったもの）と、ほかを読み込まなかった理由。"""
     return f"; no loaded plugin provides it (loaded: {', '.join(sorted(PLUGINS)) or 'none'}){plugin_errors()}"
 
 
@@ -208,7 +204,7 @@ def get(encoder_id):
 
 
 def clips(y, sr, clip_s, n):
-    """n windows of clip_s seconds spread over 15-75% of the song (skips intro/outro); short songs are padded."""
+    """曲の 15-75% に広げた clip_s 秒の窓を n 個（前奏と後奏を飛ばす）。短い曲は埋める。"""
     L = int(clip_s * sr)
     if len(y) <= L:
         return [np.pad(y, (0, L - len(y)))]
@@ -245,30 +241,30 @@ class Encoder:
         return {}
 
     def own_models(self):
-        """The models this encoder itself reads (ClipAudioEncoder adds its stem's)."""
+        """このエンコーダー自身が読むモデル（ClipAudioEncoder はステムのものを足す）。"""
         return self.models
 
     def own_credits(self):
-        """The credits of this encoder itself (ClipAudioEncoder adds its stem's)."""
+        """このエンコーダー自身のクレジット（ClipAudioEncoder はステムのものを足す）。"""
         return self.credits
 
     def all_credits(self):
-        """What the view owes: its own credits and its sources' (no repeats, in order). Written to the DB manifest."""
+        """ビューが負うもの: 自分のクレジットと元のもの（重ねず、順に）。DB のマニフェストに書く。"""
         out = list(self.own_credits())
         for s in self.sources():
             out += [c for c in get(s).all_credits() if c not in out]
         return out
 
     def required_models(self):
-        """Every model needed to compute this view: its own and its sources' (no repeats, in order)."""
+        """このビューの計算に要るすべてのモデル: 自分のものと元のもの（重ねず、順に）。"""
         out = list(self.own_models())
         for s in self.sources():
             out += [m for m in get(s).required_models() if m not in out]
         return out
 
     def model_dir(self, model=None):
-        """The local folder of `model` (default: the first declared) under the setting models_dir, after checking
-        every declared file is there. OctantVector never downloads a model."""
+        """設定 models_dir の下の `model`（既定: 最初に宣言したもの）の手元のフォルダ。宣言したどのファイルもあることを
+        確かめてから返す。OctantVector はモデルをダウンロードしない。"""
         m = model or self.own_models()[0]
         root = config.load().models_dir
         d = Path(root) / m.path if root else None
@@ -277,17 +273,17 @@ class Encoder:
         return d
 
     def sources(self):
-        """Ids of the views this encoder is computed from."""
+        """このエンコーダーを計算する元のビューの id。"""
         return [i[5:] for i in self.inputs if i.startswith("view:")]
 
     @property
     def source(self):
-        """The single source view of a derived encoder."""
+        """派生のエンコーダーのただ 1 つの元のビュー。"""
         (s,) = self.sources()
         return s
 
     def definition(self):
-        """What the store records in encoder.json and compares on open (JSON-normalised)."""
+        """ストアが encoder.json に記録し、開くときに比べるもの（JSON に正規化したもの）。"""
         params = self.params()
         if self.own_models():
             params = {**params, "models": [m.key for m in self.own_models()]}
@@ -303,9 +299,9 @@ class Encoder:
 
 
 class DerivedEncoder(Encoder):
-    """A view computed row by row from one source view's stored vectors: values(X, device) maps (rows, source dim)
-    to (rows, dim). derive reads the source store and writes only the rows this view does not have yet; the hook is
-    not called when there are none (so a model it loads is not loaded for nothing)."""
+    """1 つの元のビューの保存したベクトルから、行ごとに計算するビュー: values(X, device) は (rows, 元の dim) を
+    (rows, dim) にする。derive は元のストアを読み、このビューがまだ持たない行だけを書く。そういう行がなければフックは
+    呼ばない（読み込むモデルを無駄に読み込まないように）。"""
     kind = "derived"
 
     def values(self, X, device="cpu"):
@@ -329,23 +325,23 @@ class AudioEncoder(Encoder):
     inputs = ("audio",)
     sr = None
 
-    def setup_worker(self):  # CPU-side objects (feature extractors), once per worker process
+    def setup_worker(self):  # CPU の側の物（特徴抽出器）。ワーカーのプロセスごとに一度
         pass
 
-    def setup_model(self, device):  # model, main process only
+    def setup_model(self, device):  # モデル。メインのプロセスだけ
         pass
 
-    batch = 1  # > 1: the heavy pass hands embed_many this many maps at once
+    batch = 1  # > 1: 重い処理が embed_many にこの数のマップをまとめて渡す
 
     def embed_many(self, prepped):
-        """-> one output (vector or None) per prepped map."""
+        """-> 用意したマップごとに 1 つの出力（ベクトルか None）。"""
         return [self.embed(x) for x in prepped]
 
 
 class ImageEncoder(Encoder):
-    """A view of the map's cover image: prep(data) in the CPU worker gets the image file's bytes and returns a picklable
-    value (decoded and resized); embed(prepped) in the main process (GPU when available) returns a (dim,) vector or
-    None. With `batch` > 1, embed_many gets that many maps at once, as for audio."""
+    """マップのカバー画像のビュー: CPU のワーカーで prep(data) が画像のファイルのバイト列を受け取り、pickle できる値
+    （デコードして縮めたもの）を返す。メインのプロセス（使えれば GPU）で embed(prepped) が (dim,) のベクトルか None を
+    返す。`batch` が 1 より大きければ、音声と同じく embed_many がその数のマップをまとめて受け取る。"""
     kind = "image"
     norm = "center"
     inputs = ("cover",)

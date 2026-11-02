@@ -1,13 +1,13 @@
-"""Chart identity and play style (OctantSpecs constitution.md, principles 1 and 2; contracts/, contract 2 (DB build to recommendation core)).
+"""譜面の識別とプレイスタイル（OctantSpecs constitution.md、原則 1 と 2。contracts/、契約2（DB build to
+recommendation core））。
 
-A chart is what a player plays: one difficulty of one characteristic of one map version. Views computed from the
-charts are stored per chart under the key "<version hash>:<characteristic>:<difficulty>"; views computed from the
-song or the map's metadata are stored per version hash. key_hash() turns either kind of key into the version hash,
-so the ledger, pools and calibration keep working per map version.
+譜面はプレイヤーが遊ぶもの: マップの 1 つの版の、1 つの characteristic の、1 つの難易度。譜面から計算したビューは
+譜面ごとに "<版の hash>:<characteristic>:<difficulty>" のキーで持ち、曲やマップのメタデータから計算したビューは
+版の hash ごとに持つ。key_hash() はどちらのキーも版の hash にするので、台帳、プール、較正はマップの版ごとに働く。
 
-Each chart has a play style. Charts of different play styles are never compared as if they were the same thing: a
-chart view only measures similarity between charts of the same play style. The play style is the characteristic's
-name for now; a play style that the characteristic alone cannot tell apart would be decided here.
+譜面にはそれぞれプレイスタイルがある。プレイスタイルの違う譜面どうしを同じものとして比べない: 譜面のビューは
+同じプレイスタイルの譜面どうしの似ている度合いだけを測る。プレイスタイルは今は characteristic の名前。
+characteristic だけでは見分けられないプレイスタイルが出てきたら、ここで決める。
 """
 import numpy as np
 
@@ -24,20 +24,19 @@ _DIFF_SPELLING = {**{d.lower(): d for d in DIFF_ORDER}, "expert+": "ExpertPlus"}
 
 
 def difficulty(name):
-    """A difficulty name spelled as BeatSaver's catalogue spells it ("normal" -> "Normal", "Expert+" ->
-    "ExpertPlus"); any other name is returned as it is."""
+    """難易度の名前を BeatSaver のカタログの書き方にする（"normal" -> "Normal"、"Expert+" -> "ExpertPlus"）。
+    ほかの名前はそのまま返す。"""
     return _DIFF_SPELLING.get(name.lower(), name) if isinstance(name, str) else name
 
 
 def difficulty_rank(name):
-    """Position of a difficulty from Easy (0) to ExpertPlus (4); -1 for a name outside DIFF_ORDER."""
+    """Easy（0）から ExpertPlus（4）までの難易度の位置。DIFF_ORDER にない名前は -1。"""
     return DIFF_ORDER.index(name) if name in DIFF_ORDER else -1
 
 
 def catalogue_spelling(chart_key):
-    """The chart key with its difficulty spelled as BeatSaver's catalogue spells it. Some older zips write
-    "normal" or "Expert+" in Info.dat for the catalogue's "Normal" and "ExpertPlus"; any other key is returned as
-    it is (a difficulty that differs in more than spelling is a different chart)."""
+    """難易度を BeatSaver のカタログの書き方にした譜面のキー。古い zip には、カタログの "Normal" と "ExpertPlus" を
+    Info.dat に "normal" や "Expert+" と書くものがある。ほかのキーはそのまま返す（書き方以上に違う難易度は別の譜面）。"""
     if not is_chart_key(chart_key):
         return chart_key
     h, c, d = split(chart_key)
@@ -45,13 +44,13 @@ def catalogue_spelling(chart_key):
 
 
 def split(chart_key):
-    """-> (version hash, characteristic, difficulty)"""
+    """-> (版の hash, characteristic, difficulty)"""
     h, c, d = chart_key.split(SEP, 2)
     return h, c, d
 
 
 def key_hash(k):
-    """Version hash of a chart key; a version hash (a map row) is returned as it is."""
+    """譜面のキーの版の hash。版の hash（マップの行）はそのまま返す。"""
     return k.split(SEP, 1)[0]
 
 
@@ -70,15 +69,14 @@ def _rank(k):
 
 
 def hardest_standard(keys):
-    """The hardest Standard chart (up to ExpertPlus) among chart keys, or None."""
+    """譜面のキーのうち、一番難しい Standard の譜面（ExpertPlus まで）。なければ None。"""
     ranked = [(_rank(k), k) for k in keys if _rank(k) is not None]
     return max(ranked)[1] if ranked else None
 
 
 def representative(keys, vecs):
-    """One chart per map version for map-level experiments (search, eval-personal): the hardest Standard
-    difficulty up to ExpertPlus, which is what the chart views described before they were stored per chart.
-    -> (version hashes, vectors)."""
+    """マップ単位の実験（search、eval-personal）のための、マップの版ごとに 1 つの譜面: ExpertPlus までで一番難しい
+    Standard の難易度。譜面のビューを譜面ごとに持つ前に表していたもの。-> (版の hash, ベクトル)。"""
     best = {}
     for n, k in enumerate(keys):
         rank, h = _rank(k), key_hash(k)

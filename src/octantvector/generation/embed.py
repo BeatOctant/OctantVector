@@ -1,10 +1,10 @@
-"""`octantvector update`: ingest the catalogue and archive into the ledger, re-evaluate the pools, then compute only
-what the ledger says is missing (ledger.py). Running it again right after computes nothing.
+"""`octantvector update`: カタログとアーカイブを台帳に取り込み、プールを見直し、台帳が足りないと言うものだけを計算する
+（ledger.py）。直後にもう一度実行しても何も計算しない。
 
-Order: map encoders (catalogue only), then one pass over the zips for audio, image and zip encoders, then derived
-encoders. Zips are read in journal commit_seq order (sequential on disk); each song is decoded once and shared by every
-audio encoder, and the cover image is read once for every image encoder. The caller names the views and the pool
-(pools.py) they are computed over.
+順番: マップのエンコーダー（カタログだけ）、続いて音声、画像、zip のエンコーダーのために zip を一通り、最後に派生の
+エンコーダー。zip はジャーナルの commit_seq の順（ディスク上で順に並ぶ）で読む。各曲は一度だけデコードしてすべての
+音声のエンコーダーで分け合い、カバー画像もすべての画像のエンコーダーのために一度だけ読む。ビューと、それを計算する
+プール（pools.py）は呼ぶ側が名指す。
 """
 import hashlib
 import multiprocessing as mp
@@ -30,13 +30,13 @@ from .search import resolve_device
 from .store import Store
 
 _WORKER = {}
-MAIN_KINDS = ("audio", "image")  # prepared in the workers, embedded in the main process (GPU)
+MAIN_KINDS = ("audio", "image")  # ワーカーで用意し、メインのプロセス（GPU）で埋め込む
 
 
 def _init(ids, archive_root, given=None):
-    if given is not None:  # a contract 1 (OctantHarvest to OctantVector) call: the worker sees the caller's settings, not the file
+    if given is not None:  # 契約1（OctantHarvest to OctantVector）の呼び出し: ワーカーはファイルではなく呼ぶ側の設定を見る
         config._GIVEN.set(given)
-    try:  # zip-only encoders (chart_patterns, swing_flow) run without torch
+    try:  # zip だけのエンコーダー（chart_patterns、swing_flow）は torch なしで動く
         import torch
         torch.set_num_threads(1)
     except ImportError:
@@ -51,11 +51,11 @@ def _init(ids, archive_root, given=None):
 
 
 def _work(task):
-    """-> (hash, encoder ids, zip sha256, {encoder id: output | None | Exception}, map-level error)"""
+    """-> (hash, エンコーダーの id, zip の sha256, {encoder id: 出力 | None | Exception}, マップ単位のエラー)"""
     h, ids = task
     out, sha = {}, None
     try:
-        raw = archive.zip_path(_WORKER["archive"], h).read_bytes()  # read once: hashed, then opened from memory
+        raw = archive.zip_path(_WORKER["archive"], h).read_bytes()  # 一度だけ読む: hash を取り、メモリから開く
         sha = hashlib.sha256(raw).hexdigest()
         with archive.MapZip(_WORKER["archive"], h, raw) as mz:
             for i in ids:
@@ -63,16 +63,16 @@ def _work(task):
                 if e.kind == "zip":
                     try:
                         out[i] = e.embed_zip(mz)
-                    except Exception as ex:  # a broken chart only fails that encoder
+                    except Exception as ex:  # 壊れた譜面は、そのエンコーダーだけを失敗させる
                         out[i] = ex
             audio = [i for i in ids if _WORKER["encs"][i].kind == "audio"]
             data = mz.song_bytes() if audio else None
             image = [i for i in ids if _WORKER["encs"][i].kind == "image"]
             try:
                 cover = mz.cover_bytes() if image else None
-            except Exception as ex:  # a cover that cannot be read from the zip only fails the image encoders
+            except Exception as ex:  # zip から読めないカバーは、画像のエンコーダーだけを失敗させる
                 cover = ex
-        for i in image:  # a map without a cover is a skip; one that cannot be read or decoded fails that encoder
+        for i in image:  # カバーのないマップは skip。読めないかデコードできないものは、そのエンコーダーを失敗させる
             if isinstance(cover, Exception):
                 out[i] = cover
                 continue
@@ -83,7 +83,7 @@ def _work(task):
         if audio:
             try:
                 y, sr = archive.decode_audio(data)
-            except Exception as ex:  # a song that cannot be decoded only fails the audio encoders
+            except Exception as ex:  # デコードできない曲は、音声のエンコーダーだけを失敗させる
                 out.update((i, ex) for i in audio)
             else:
                 for i in audio:
@@ -94,9 +94,8 @@ def _work(task):
 
 
 def run(cfg, encoder_ids, pool="distribution", n=None, seed=2, retry_errors=False, log=sys.stderr):
-    """Compute `encoder_ids` (and the sources of derived ones) over the pool `pool`. n: random subset of the pool
-    (tests and quick experiments).
-    -> {encoder id: maps left for a later run because the GPU had no room for them} (only encoders that left any)."""
+    """プール `pool` で `encoder_ids`（と派生のものの元）を計算する。n: プールの無作為な部分（テストと手早い実験）。
+    -> {encoder id: GPU に空きがなく後の実行に残したマップ}（残したエンコーダーだけ）。"""
     arch, cat = cfg.require("archive"), cfg.require("catalogue")
     if not encoder_ids:
         raise GenerationError("name the views to compute")
@@ -107,7 +106,7 @@ def run(cfg, encoder_ids, pool="distribution", n=None, seed=2, retry_errors=Fals
         raise GenerationError(f"unknown pool {pool!r}; known: {', '.join(sorted(defs))}")
     led = Ledger(Path(cfg.store) / "ledger.sqlite")
     try:
-        all_map = {i: c() for i, c in registry().items() if c.kind == "map"}  # digests of every map encoder stay current
+        all_map = {i: c() for i, c in registry().items() if c.kind == "map"}  # どのマップのエンコーダーの要約も今のものに保つ
         counts = led.ingest(catalogue.read_jsonl(cat), archive.commit_order(arch), all_map, defs)
         print("ingest: " + ", ".join(f"{k} {v}" for k, v in counts.items()), file=log)
 
@@ -136,10 +135,10 @@ def run(cfg, encoder_ids, pool="distribution", n=None, seed=2, retry_errors=Fals
         heavy = [i for i in plan if encs[i].kind in MAIN_KINDS + ("zip",) and plan[i]]
         no_room = _run_heavy(cfg, arch, led, encs, stores, pending, {i: plan[i] for i in heavy}, log) if heavy else {}
         for i in [i for i in encs if encs[i].kind == "derived"]:
-            # derived views follow their source store; whatever they add is recorded like any other result
+            # 派生のビューは元のストアに従う。足したものはほかの結果と同じく記録する
             try:
                 print(f"{i}: {encs[i].derive(cfg.store, _device(cfg))} vectors", file=log)
-            except GenerationError as ex:  # e.g. no style model configured: the other views are still done
+            except GenerationError as ex:  # 例 スタイルのモデルが設定されていない: ほかのビューはそれでも済ませる
                 print(f"{i}: skipped ({ex})", file=log)
                 continue
             led.adopt(encs[i], stores[i].fingerprint, Store(encs[i], cfg.store).done())
@@ -153,19 +152,19 @@ def run(cfg, encoder_ids, pool="distribution", n=None, seed=2, retry_errors=Fals
 
 
 def _with_sources(ids):
-    """Sources first, so a derived view finds them computed."""
+    """元を先に。派生のビューが、元を計算済みで見つけられるように。"""
     for i in ids:
         yield from _with_sources(get(i).sources())
         yield i
 
 
 def _flushed(led, enc, store, pending, keys):
-    hashes = dict.fromkeys(key_hash(k) for k in keys)  # chart rows: one result per map version
+    hashes = dict.fromkeys(key_hash(k) for k in keys)  # 譜面の行: マップの版ごとに 1 つの結果
     led.record(enc, store.fingerprint, [(h, "ok", pending.pop((enc.id, h), None), None) for h in hashes])
 
 
 def _add(store, h, x):
-    """One map's output: a vector (map rows) or {chart key: vector} (chart rows). -> False if there was nothing."""
+    """1 マップの出力: ベクトル（マップの行）か {譜面のキー: ベクトル}（譜面の行）。-> 何もなければ False。"""
     if isinstance(x, dict):
         if not x:
             return False
@@ -193,7 +192,7 @@ def _run_map(led, enc, store, pending, todo, recs):
 
 
 def _run_heavy(cfg, arch, led, encs, stores, pending, plan, log):
-    """-> {encoder id: maps the GPU had no room for} (_consume)."""
+    """-> {encoder id: GPU に空きのなかったマップ}（_consume）。"""
     heavy = list(plan)
     want = {}
     for i, hs in plan.items():
@@ -208,7 +207,7 @@ def _run_heavy(cfg, arch, led, encs, stores, pending, plan, log):
             encs[i].setup_model(device)
     t0 = time.time()
     try:
-        if cfg.workers <= 1:  # in-process (tests, debugging)
+        if cfg.workers <= 1:  # プロセスの中で（テスト、デバッグ）
             _init(heavy, str(arch))
             results = map(_work, tasks)
             return _consume(led, encs, stores, results, len(tasks), t0, log)
@@ -222,31 +221,32 @@ def _run_heavy(cfg, arch, led, encs, stores, pending, plan, log):
             stores[i].flush()
 
 
-# numeric libraries start one thread per CPU in every worker; with many workers those threads only fight each other
+# 数値計算のライブラリは、どのワーカーでも CPU ごとに 1 つのスレッドを始める。ワーカーが多いと、そのスレッドは
+# 互いに取り合うだけ
 ONE_THREAD = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS")
 
 
-# a worker is replaced after this many maps, so memory that builds up in a long-lived worker is given back
+# ワーカーはこの数のマップを扱ったら入れ替える。長く生きたワーカーにたまるメモリを返すため
 TASKS_PER_WORKER = 200
 
 
 class MemoryLimitExceeded(Exception):
-    """A worker went over the memory limit on this task and was stopped (only that task is lost)."""
+    """ワーカーがこのタスクでメモリの上限を超え、止められた（失うのはそのタスクだけ）。"""
 
 
 def _tracked(fn, notes, i, task):
-    """Runs in the worker: note which task this process holds, so the parent can name and stop it."""
+    """ワーカーで走る: このプロセスがどのタスクを持つかを書き残し、親がそれを名指して止められるようにする。"""
     note = Path(notes) / str(os.getpid())
     note.write_text(str(i))
     try:
         return fn(task)
-    finally:  # a worker that is replaced (TASKS_PER_WORKER) leaves no note behind whose pid could be reused
+    finally:  # 入れ替えたワーカー（TASKS_PER_WORKER）は、pid を使い回され得る書き置きを残さない
         note.unlink()
 
 
 def _anon(pid):
-    """Bytes of the process's own (anonymous) memory. Not the whole resident size: the shared libraries a worker maps
-    (torch's alone are several GB) count there too, although they cost no memory of their own."""
+    """プロセス自身の（匿名の）メモリのバイト数。常駐の大きさ全体ではない: ワーカーが割り当てる共有ライブラリ（torch
+    だけで数 GB）もそこに数えられるが、自分のメモリは使わない。"""
     with open(f"/proc/{pid}/status") as f:
         for line in f:
             if line.startswith("RssAnon:"):
@@ -255,7 +255,7 @@ def _anon(pid):
 
 
 def _watch(notes, limit, killed, stop):
-    """Parent thread: stop any worker whose own memory goes over `limit` bytes, noting the task it held."""
+    """親のスレッド: 自分のメモリが `limit` バイトを超えたワーカーを止め、持っていたタスクを書き残す。"""
     while not stop.wait(0.2):
         for note in Path(notes).iterdir():
             try:
@@ -263,21 +263,20 @@ def _watch(notes, limit, killed, stop):
                 if _anon(pid) > limit:
                     killed.add(int(note.read_text()))
                     os.kill(pid, signal.SIGKILL)
-            except (OSError, ValueError):  # the worker ended or is just writing its note
+            except (OSError, ValueError):  # ワーカーが終わったか、ちょうど書き置きを書いている
                 continue
 
 
 def parallel(fn, tasks, workers, initializer, initargs, in_flight=4, memory_limit=None):
-    """-> (task, fn(task)) for every task, run in worker processes, as they finish (any order). At most in_flight per
-    worker wait to be consumed, so a slow consumer does not pile results up in memory.
+    """-> すべてのタスクの (task, fn(task))。ワーカーのプロセスで走らせ、終わった順に返す（順は決まらない）。ワーカーごとに
+    受け取り待ちは in_flight まで。受け取りが遅くても、結果がメモリにたまらないようにするため。
 
-    memory_limit (bytes, Linux): a worker whose own (anonymous) memory goes over it is stopped; its task comes back as
-    (task, MemoryLimitExceeded) and the other tasks go on in fresh workers. A worker that dies any other way (crashed
-    in native code, killed from outside) stops the run with the tasks it may have held: a rerun continues from the
-    ledger."""
+    memory_limit（バイト、Linux）: 自分の（匿名の）メモリがこれを超えたワーカーは止める。そのタスクは
+    (task, MemoryLimitExceeded) で返り、ほかのタスクは新しいワーカーで続く。ほかの形で死んだワーカー（ネイティブの
+    コードで落ちた、外から殺された）は、持っていたかもしれないタスクとともに実行を止める: やり直せば台帳から続く。"""
     saved = {k: os.environ.get(k) for k in ONE_THREAD}
-    for k in ONE_THREAD:  # read by each worker as it starts (workers start as tasks are submitted); a caller's own
-        os.environ.setdefault(k, "1")  # values are kept, and everything is restored when the run ends
+    for k in ONE_THREAD:  # 各ワーカーが始まるときに読む（ワーカーはタスクを渡すときに始まる）。呼ぶ側の値は
+        os.environ.setdefault(k, "1")  # 残し、実行が終われば全部を元に戻す
     watch = bool(memory_limit) and os.path.exists("/proc/self/status")
     todo = deque(enumerate(tasks))
     try:
@@ -285,7 +284,8 @@ def parallel(fn, tasks, workers, initializer, initargs, in_flight=4, memory_limi
             with tempfile.TemporaryDirectory() as notes:
                 killed, stop = set(), threading.Event()
                 watcher = threading.Thread(target=_watch, args=(notes, memory_limit, killed, stop), daemon=True)
-                # spawn, not fork: the main process may already hold CUDA / downloader threads (forked workers deadlock)
+                # fork ではなく spawn: メインのプロセスがもう CUDA やダウンロードのスレッドを持っているかもしれない（fork した
+                # ワーカーは止まってしまう）
                 ex = ProcessPoolExecutor(workers, mp_context=mp.get_context("spawn"), initializer=initializer,
                                          initargs=initargs, max_tasks_per_child=TASKS_PER_WORKER)
                 if watch:
@@ -298,7 +298,7 @@ def parallel(fn, tasks, workers, initializer, initargs, in_flight=4, memory_limi
                             i, task = todo.popleft()
                             try:
                                 running[ex.submit(_tracked, fn, notes, i, task)] = (i, task)
-                            except BrokenProcessPool:  # a worker died before its result was collected
+                            except BrokenProcessPool:  # 結果を集める前にワーカーが死んだ
                                 todo.appendleft((i, task))
                                 broken = True
                                 break
@@ -330,7 +330,7 @@ def parallel(fn, tasks, workers, initializer, initargs, in_flight=4, memory_limi
                 for i, task in sorted(running.values(), key=lambda t: t[0], reverse=True):
                     if i in killed:
                         yield task, MemoryLimitExceeded(f"used more than {memory_limit / 2**30:.1f} GiB of memory")
-                    else:  # held by a worker that was only stopped with the pool: computed again
+                    else:  # プールと一緒に止められただけのワーカーが持っていた: もう一度計算する
                         todo.appendleft((i, task))
     finally:
         for k, v in saved.items():
@@ -341,7 +341,7 @@ def parallel(fn, tasks, workers, initializer, initargs, in_flight=4, memory_limi
 
 
 def _unpack(task, r, log):
-    """A task stopped for its memory fails every encoder that wanted that map, like a zip that cannot be read."""
+    """メモリのために止めたタスクは、そのマップを求めたどのエンコーダーも失敗にする（読めない zip と同じ）。"""
     if isinstance(r, MemoryLimitExceeded):
         h, ids = task
         print(f"{h}: worker stopped, it {r}", file=log, flush=True)
@@ -349,23 +349,23 @@ def _unpack(task, r, log):
     return r
 
 
-# groups handed to the model thread before the main process waits for the oldest: enough that the GPU always has the
-# next group while the main process takes in the workers' results, few enough that prepped maps do not pile up
+# メインのプロセスが一番古いものを待つ前にモデルのスレッドへ渡すまとまりの数: メインのプロセスがワーカーの結果を
+# 受け取るあいだも GPU がいつも次のまとまりを持てるほど多く、用意したマップがたまらないほど少なく
 GPU_AHEAD = 2
 
 
 def _consume(led, encs, stores, results, total, t0, log):
-    """Audio and image encoders with `batch` > 1 get their maps in groups (embed_many), so the GPU works on several
-    maps at once; a group's results are recorded when the group is embedded (and the rest at the end).
+    """`batch` が 1 より大きい音声と画像のエンコーダーは、マップをまとまりで受け取る（embed_many）ので、GPU は一度に
+    いくつものマップを扱う。まとまりの結果は、そのまとまりを埋め込んだときに記録する（残りは最後に）。
 
-    The models run in one thread of their own, so the main process goes on taking in the workers' results (and the
-    workers go on decoding) while the GPU works: neither waits for the other. Only the main process writes the ledger
-    and the stores; results are recorded in the order the groups were handed over.
+    モデルは専用の 1 つのスレッドで動くので、GPU が働くあいだもメインのプロセスはワーカーの結果を受け取り続け（ワーカー
+    はデコードを続ける）、どちらも相手を待たない。台帳とストアに書くのはメインのプロセスだけで、結果はまとまりを渡した
+    順に記録する。
 
-    When the GPU has no room, the models get smaller groups (_run_model); a map that does not fit even alone is not
-    recorded, so the next run computes it. -> {encoder id: such maps} (only encoders that left any)."""
+    GPU に空きがなければ、モデルはもっと小さいまとまりを受け取る（_run_model）。1 つでも入らないマップは記録しないので、
+    次の実行で計算する。-> {encoder id: そういうマップ}（残したエンコーダーだけ）。"""
     groups, ahead, no_room = {}, deque(), {}
-    sizes = {i: [getattr(e, "batch", 1)] for i, e in encs.items()}  # maps per model call, shrunk by _run_model
+    sizes = {i: [getattr(e, "batch", 1)] for i, e in encs.items()}  # モデル 1 回の呼び出しのマップ数。_run_model が縮める
     model = ThreadPoolExecutor(1, thread_name_prefix="octantvector-model")
 
     def hand_over(i, group):
@@ -396,7 +396,7 @@ def _consume(led, encs, stores, results, total, t0, log):
                         _embedded(led, encs[i], stores[i], h, x)
                     except Exception as ex:
                         fails[i] = ("error", repr(ex))
-            if err:  # the zip could not be read at all: every encoder that wanted it failed
+            if err:  # zip がまったく読めなかった: それを求めたどのエンコーダーも失敗した
                 for i in ids:
                     fails.setdefault(i, ("error", err))
             for i, (r, e) in fails.items():
@@ -404,7 +404,7 @@ def _consume(led, encs, stores, results, total, t0, log):
             if k % 100 == 0:
                 rate = k / (time.time() - t0)
                 print(f"{k}/{total}  {rate:.1f} maps/s  eta {(total - k) / rate / 60:.1f} min", file=log, flush=True)
-    finally:  # also when the run stops: what was read is not computed again
+    finally:  # 実行が止まるときも: 読んだものは計算し直さない
         try:
             for i, g in groups.items():
                 hand_over(i, g)
@@ -416,35 +416,35 @@ def _consume(led, encs, stores, results, total, t0, log):
 
 
 def _embedded(led, enc, store, h, v):
-    """One map's output. None from an audio or image encoder means it found nothing to describe (e.g. no voice in the
-    song): recorded as a skip."""
+    """1 マップの出力。音声か画像のエンコーダーからの None は、表すものが見つからなかったこと（例 曲に声がない）: skip と
+    して記録する。"""
     if v is None:
         led.record(enc, store.fingerprint, [(h, "skip", None, None)])
     else:
         _add(store, h, v)
 
 
-# the output of a map the GPU had no room for even alone: nothing is recorded for it, so a later run computes it
+# 1 つでも GPU に入らなかったマップの出力: 何も記録しないので、後の実行で計算する
 NO_ROOM = object()
 
 
 def _out_of_memory(ex):
-    """Whether `ex` is torch's CUDA out of memory (told by its name: torch is not imported here)."""
+    """`ex` が torch の CUDA のメモリ不足か（名前で見分ける: ここでは torch を import しない）。"""
     return type(ex).__name__ == "OutOfMemoryError"
 
 
 def _empty_cache():
-    """Give the GPU memory torch holds cached for other models back, so the next try has the room they left."""
+    """torch がほかのモデルのためにキャッシュしている GPU のメモリを返し、次の試しがその空きを使えるようにする。"""
     torch = sys.modules.get("torch")
     if torch is not None and torch.cuda.is_available():
         torch.cuda.empty_cache()
 
 
 def _run_model(enc, xs, size, log):
-    """In the model thread: one output per prepped map (embed_many for an encoder with a batch, else embed), `size[0]`
-    maps per call. When the GPU has no room (other models' and other programs' memory, e.g. a VR server), the cache is
-    emptied and the call tried again with half as many maps, down to one; the encoder keeps the smaller size for the
-    rest of the run (size is shared by its groups). A map that still does not fit alone, tried twice, gets NO_ROOM."""
+    """モデルのスレッドで: 用意したマップごとに 1 つの出力（batch のあるエンコーダーは embed_many、なければ embed）。
+    1 回の呼び出しで `size[0]` マップ。GPU に空きがなければ（ほかのモデルやほかのプログラムのメモリ、例 VR のサーバー）、
+    キャッシュを空けて、マップを半分にしてもう一度試し、1 つまで下げる。エンコーダーは実行の残りでも小さい数を使う
+    （size はそのまとまりで共有する）。2 回試しても 1 つで入らないマップは NO_ROOM。"""
     out, again = [], False
     while len(out) < len(xs):
         part = xs[len(out):len(out) + size[0]]
@@ -455,7 +455,7 @@ def _run_model(enc, xs, size, log):
         except Exception as ex:
             if not _out_of_memory(ex):
                 raise
-        _empty_cache()  # outside the except: the failed call's tensors, held by its traceback, are freed by now
+        _empty_cache()  # except の外: 失敗した呼び出しの、traceback が持つテンソルはもう解放されている
         if size[0] > 1:
             size[0] //= 2
             print(f"{enc.id}: the GPU had no room, {size[0]} maps at a time from now", file=log, flush=True)
@@ -468,8 +468,8 @@ def _run_model(enc, xs, size, log):
 
 
 def _record_group(led, encs, stores, no_room, i, group, future):
-    """Record a group handed to the model thread, waiting for it if the model is still at work. A map the GPU had no
-    room for is only counted in no_room."""
+    """モデルのスレッドに渡したまとまりを記録する。モデルがまだ働いていれば待つ。GPU に空きのなかったマップは no_room に
+    数えるだけ。"""
     enc, store = encs[i], stores[i]
     try:
         vs = future.result()
@@ -487,5 +487,5 @@ def _record_group(led, encs, stores, no_room, i, group, future):
 
 
 def _device(cfg):
-    """The device the models run on ("cuda" or "cpu"), by the setting `device` (search.resolve_device)."""
+    """モデルを動かすデバイス（"cuda" か "cpu"）。設定 `device` で決める（search.resolve_device）。"""
     return "cpu" if resolve_device(cfg.device) is None else "cuda"

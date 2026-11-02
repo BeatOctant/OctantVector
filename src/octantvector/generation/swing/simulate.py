@@ -1,8 +1,8 @@
-"""Swing simulation: how a player is expected to swing through a chart (OctantSpecs octantvector/swing.md).
+"""スイングのシミュレーション: プレイヤーが譜面をどう振ると見込まれるか（OctantSpecs octantvector/swing.md）。
 
-Per hand: notes -> swings (stacks, windows, sliders, chains) -> swing direction (dots resolved from the flow) ->
-forehand/backhand by dynamic programming over angle strain, resets and bombs -> per-swing wrist roll, hand
-positions, movement and BeatLeader-style pass/tech difficulty (with its wall buff; walls and bombs in hazards.py).
+手ごとに: ノーツ -> スイング（重なり、窓、スライダー、チェーン）-> スイングの向き（ドットは流れから決める）->
+角度の負担、リセット、爆弾の上の動的計画法でフォアハンドかバックハンドか -> スイングごとの手首のひねり、手の
+位置、動き、BeatLeader 風の pass/tech の難しさ（壁による上乗せ付き。壁と爆弾は hazards.py）。
 """
 import bisect
 import math
@@ -13,24 +13,24 @@ from .chart import Chart, Note
 
 @dataclass
 class Swing:
-    hand: int                 # 0 left (red), 1 right (blue)
+    hand: int                 # 0 左（赤）、1 右（青）
     notes: list
-    t: float                  # first note, seconds
-    t_end: float              # last note (chain tail time is not known; head time)
-    b: float                  # first note, beats
+    t: float                  # 最初のノーツ、秒
+    t_end: float              # 最後のノーツ（チェーンの尾の時刻は分からないので頭の時刻）
+    b: float                  # 最初のノーツ、拍
     kind: str                 # single | stack | window | slider | chain
-    dot: bool                 # every note is a dot
-    dir: float = 270.0        # swing direction, degrees (0 right, 90 up)
+    dot: bool                 # どのノーツもドット
+    dir: float = 270.0        # スイングの向き、度（0 右、90 上）
     entry: tuple = (0.0, 0.0)
     exit: tuple = (0.0, 0.0)
     forehand: bool = True
-    reset: bool = False       # same parity as the previous swing of this hand
+    reset: bool = False       # この手の前のスイングと同じパリティ
     bomb_reset: bool = False
-    reset_bombs: tuple = ()   # indices into chart.bombs of the bombs that forced a bomb reset
-    roll: float = 0.0         # signed wrist roll from the neutral direction of this parity, degrees
-    dt: float = 0.0           # seconds since the previous swing of this hand started
-    gap: float = 0.0          # seconds from the previous swing's last note to this swing's first
-    dbeat: float = 0.0        # beats since the previous swing of this hand started
+    reset_bombs: tuple = ()   # 爆弾のリセットを強いた爆弾の、chart.bombs への添字
+    roll: float = 0.0         # このパリティの中立の向きからの、符号付きの手首のひねり、度
+    dt: float = 0.0           # この手の前のスイングが始まってからの秒
+    gap: float = 0.0          # 前のスイングの最後のノーツから、このスイングの最初のノーツまでの秒
+    dbeat: float = 0.0        # この手の前のスイングが始まってからの拍
     strain: float = 0.0
     rotation: float = 0.0
     reposition: float = 0.0
@@ -41,7 +41,7 @@ class Swing:
 
 
 def angdiff(a, b):
-    """Signed b - a in (-180, 180]."""
+    """符号付きの b - a。(-180, 180] の範囲。"""
     return (b - a + 540.0) % 360.0 - 180.0
 
 
@@ -74,22 +74,22 @@ class Grid:
         return self.x(n.x), self.y(n.y)
 
 
-# ---------------------------------------------------------------- grouping
+# ---------------------------------------------------------------- まとめ方
 def _joinable(prev: Note, n: Note, P):
     dt = n.t - prev.t
-    if dt < P["simultaneous_s"] or dt < P["swing_merge_s"]:  # nobody swings twice this fast: one swing
+    if dt < P["simultaneous_s"] or dt < P["swing_merge_s"]:  # 誰もこんなに速く 2 回は振らない: 1 回のスイング
         return True
     if prev.tail is not None:
         return False
     close = dt <= P["slider_max_gap_s"]
-    # slider pieces up to 1/8 beat apart (capped in seconds for slow songs), when the arrows say so
+    # 1/8 拍以内のスライダーの欠片（遅い曲では秒で上限を付ける）。矢印がそう示すとき
     beat_close = n.b - prev.b <= P["slider_max_beats"] + 1e-6 and dt <= P["slider_max_gap_long_s"]
     if not (close or beat_close):
         return False
     if (prev.ang is None or n.ang is None) and dt > P["dot_max_gap_s"]:
         return False
     if prev.ang is None and n.ang is None:
-        return close  # dot spam only within the fixed window: dot vibro stays separate swings
+        return close  # ドットの連打は決まった窓の中だけ: ドットの vibro は別々のスイングのまま
     step = math.degrees(math.atan2(n.y - prev.y, n.x - prev.x)) % 360 if (n.x, n.y) != (prev.x, prev.y) else None
     if prev.ang is not None and n.ang is not None:
         return abs(angdiff(prev.ang, n.ang)) <= P["slider_max_angle"]
@@ -98,13 +98,13 @@ def _joinable(prev: Note, n: Note, P):
 
 
 def group(notes, hand, P):
-    """Notes of one colour (time-sorted) -> [Swing]."""
+    """1 色のノーツ（時刻順）-> [Swing]。"""
     swings, cur, turn = [], [], 0.0
     for n in notes:
         if cur and _joinable(cur[-1], n, P):
             arrows = [m.ang for m in cur if m.ang is not None]
             step = abs(angdiff(arrows[-1], n.ang)) if arrows and n.ang is not None else 0.0
-            # one swing cannot keep curving for long: a long or winding stream is several swings
+            # 1 回のスイングは長くは曲がり続けられない: 長い、またはくねるストリームは何回かのスイング
             if n.t - cur[0].t <= P["slider_max_span_s"] and turn + step <= P["slider_max_turn"]:
                 cur.append(n); turn += step
                 continue
@@ -129,7 +129,7 @@ def _swing(ns, hand, P):
     return Swing(hand, list(ns), ns[0].t, ns[-1].t, ns[0].b, kind, all(n.ang is None for n in ns))
 
 
-# ---------------------------------------------------------------- directions and positions
+# ---------------------------------------------------------------- 向きと位置
 def _circ_mean(angles):
     sx = sum(math.cos(math.radians(a)) for a in angles)
     sy = sum(math.sin(math.radians(a)) for a in angles)
@@ -137,8 +137,8 @@ def _circ_mean(angles):
 
 
 def resolve_directions(swings, grid, P):
-    """Arrow swings take their (mean) arrow; dot swings continue the flow: opposite the previous swing, turned
-    toward the geometry (multi-dot swings pick the orientation of their head->tail axis closer to that)."""
+    """矢印のスイングは（平均の）矢印の向き。ドットのスイングは流れを続ける: 前のスイングの逆で、形のほうへ向ける
+    （複数のドットのスイングは、頭から尾への軸の向きのうち、それに近いほうを選ぶ）。"""
     prev = None
     for s in swings:
         arrows = [n.ang for n in s.notes if n.ang is not None]
@@ -172,7 +172,7 @@ def resolve_directions(swings, grid, P):
         prev = s
 
 
-# ---------------------------------------------------------------- parity
+# ---------------------------------------------------------------- パリティ
 def neutral(hand, forehand, P):
     side = "right" if hand == 1 else "left"
     return P[f"neutral_{side}_{'forehand' if forehand else 'backhand'}"]
@@ -188,14 +188,14 @@ def angle_strain(s, forehand, P):
 
 
 def _bombs_at_rest(prev, cur, bombs, times, grid, P, inert=None):
-    """Indices of the bombs between two swings lying where the saber rests after `prev` (ahead of its exit, nearby)."""
+    """2 つのスイングの間の爆弾のうち、`prev` の後にセーバーが止まるところ（出口の先、近く）にあるものの添字。"""
     ux, uy = unit(prev.dir)
     lx, ly = grid.pos(prev.notes[-1])
     ex, ey = prev.exit
     lo, hi = bisect.bisect_right(times, prev.t_end + 1e-3), bisect.bisect_left(times, cur.t - 1e-3)
     out = []
     for k in range(lo, hi):
-        if inert and inert[k]:  # fake bombs and bomb drawings force nothing (hazards.inert_bombs)
+        if inert and inert[k]:  # 偽の爆弾と爆弾の絵は何も強いない（hazards.inert_bombs）
             continue
         bx, by = grid.x(bombs[k][1]), grid.y(bombs[k][2])
         if (bx - lx) * ux + (by - ly) * uy >= 0 and math.hypot(bx - ex, by - ey) <= P["bomb_rest_dist_m"]:
@@ -204,9 +204,9 @@ def _bombs_at_rest(prev, cur, bombs, times, grid, P, inert=None):
 
 
 def assign_parity(swings, bombs, grid, P, inert=None):
-    """Viterbi over (forehand, backhand) per swing. Transition cost = angle strain of the new parity + rotation away
-    from the expected direction (reverse when alternating, same when resetting) + a reset cost when parity is kept
-    (cheap if bombs force it) + a block cost for alternating through such bombs; all scaled down for long gaps."""
+    """スイングごとの（フォアハンド、バックハンド）の上の Viterbi。移る費用 = 新しいパリティの角度の負担 + 見込まれる
+    向きからの回転（交互なら逆、リセットなら同じ）+ パリティを保つときのリセットの費用（爆弾が強いるなら安い）+
+    そういう爆弾を交互で通り抜けるときの塞がれる費用。間が長ければどれも小さくする。"""
     n = len(swings)
     if n == 0:
         return
@@ -230,7 +230,7 @@ def assign_parity(swings, bombs, grid, P, inert=None):
         for cp in (0, 1):
             base = swi * angle_strain(s, bool(cp), P)
             for pp in (0, 1):
-                # alternating continues the motion (expects the reverse direction); a reset expects the same one
+                # 交互は動きを続ける（逆の向きを見込む）。リセットは同じ向きを見込む
                 expect = p.dir if pp == cp else (p.dir + 180) % 360
                 extra = rw * (abs(angdiff(expect, s.dir)) / 180.0) ** 2
                 if pp == cp:
@@ -253,7 +253,7 @@ def assign_parity(swings, bombs, grid, P, inert=None):
         s.roll = angdiff(neutral(s.hand, s.forehand, P), s.dir)
 
 
-# ---------------------------------------------------------------- movement and difficulty
+# ---------------------------------------------------------------- 動きと難しさ
 def movement(swings, grid, P):
     for i, s in enumerate(swings):
         s.strain = angle_strain(s, s.forehand, P) * P["strain_scale"]
@@ -265,7 +265,7 @@ def movement(swings, grid, P):
         s.gap = max(s.t - p.t_end, 0.0)
         s.dbeat = max(s.b - p.b, 1e-3)
         s.strain *= falloff(s.gap, P)
-        # BeatLeader SwingMovement: perpendicular repositioning + drift of the averaged swing centres
+        # BeatLeader の SwingMovement: 直角の位置の取り直し + 平均したスイングの中心のずれ
         dx, dy = s.entry[0] - p.exit[0], s.entry[1] - p.exit[1]
         px, py = unit(s.dir + 90)
         rep = abs(dx * px + dy * py) * P["reposition_perp_scale"]
@@ -294,8 +294,8 @@ def njs_buff(njs, P):
 
 
 def swing_difficulty(both, njs, P, buffs=None):
-    """BeatLeader Difficulty.CalcSwingDiff on the time-sorted swings of both hands; `buffs` (one per swing) is the
-    wall buff for swings made while dodging or crouching (hazards.wall_buffs)."""
+    """両手の時刻順のスイングに BeatLeader の Difficulty.CalcSwingDiff をかける。`buffs`（スイングごとに 1 つ）は、
+    避けたりしゃがんだりしながらのスイングへの壁による上乗せ（hazards.wall_buffs）。"""
     nb = njs_buff(njs, P)
     prev_hand = None
     for k, s in enumerate(both):
@@ -317,7 +317,7 @@ def swing_difficulty(both, njs, P, buffs=None):
 
 
 def _peak_mean(vals, w):
-    """Max over the trailing moving average of window w (BeatLeader CalcAverage: zero before the window fills)."""
+    """幅 w の後ろ向きの移動平均の最大（BeatLeader の CalcAverage: 窓が埋まるまでは 0）。"""
     if len(vals) < 2 or w < 1 or len(vals) <= w:
         return 0.0
     acc = sum(vals[:w])
@@ -329,7 +329,7 @@ def _peak_mean(vals, w):
 
 
 def ratings(left, right, both, P):
-    """-> dict(pass, tech, pass_short, pass_long, hands_ratio)."""
+    """-> dict(pass, tech, pass_short, pass_long, hands_ratio)。"""
     out = {"pass": 0.0, "tech": 0.0, "pass_short": 0.0, "pass_long": 0.0, "hands_ratio": 1.0}
     if not both:
         return out
@@ -352,7 +352,7 @@ def ratings(left, right, both, P):
 
 
 def simulate_all(chart: Chart, P):
-    """-> (swings of both hands sorted by time, ratings dict, hazards dict(wall_roles, bomb_roles))."""
+    """-> (両手のスイングを時刻順に並べたもの, 評価の dict, hazards の dict(wall_roles, bomb_roles))。"""
     from . import hazards
     grid = Grid(P)
     inert = hazards.inert_bombs(chart.bombs, P)

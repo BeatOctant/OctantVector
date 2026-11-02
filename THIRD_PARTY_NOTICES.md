@@ -64,8 +64,9 @@ SOFTWARE.
 4.1.0; https://github.com/adefossez/demucs) and loads its htdemucs model the way `demucs.hf.get_hf_model` does, from
 local files. OctantVector neither ships nor downloads the weights: they are the files `htdemucs.yaml` and
 `955717e8.safetensors` of the Hugging Face repo `adefossez/HTDemucs` at revision
-cbc8a9b1a87023b7fd74e7b3412e6321c0eab003, fetched by the caller into `models_dir`. The weights' own terms: see that
-repo's model card (not verified here).
+cbc8a9b1a87023b7fd74e7b3412e6321c0eab003, fetched by the caller into `models_dir`. That revision's model card states
+no license (it removes the earlier `license: mit`), and the author says "Weights are provided for research purpose!" (https://github.com/facebookresearch/demucs/issues/508). They are used
+only to compute the vectors and are not redistributed.
 
 ```
 MIT License

@@ -1,11 +1,11 @@
-"""BeatSaver catalogue snapshot (catalogue.jsonl.gz, one map per line) -> records and display metadata."""
+"""BeatSaver のカタログのスナップショット（catalogue.jsonl.gz、1 行 1 マップ）-> 記録と表示用のメタデータ。"""
 import gzip
 import json
 from pathlib import Path
 
 
 def read_jsonl(path: Path):
-    """The records of a gzipped JSON-lines file of the crawl (the catalogue, the artist files), blank lines skipped."""
+    """クロールの gzip された JSON lines のファイル（カタログ、アーティストのファイル）の記録。空行は飛ばす。"""
     with gzip.open(path, "rt", encoding="utf-8") as f:
         for line in f:
             if line.strip():
@@ -21,7 +21,7 @@ def standard_diffs(v):
 
 
 def records_for(catalogue: Path, hashes) -> dict:
-    """version hash -> (map record, version record) for the given hashes (one streaming pass)."""
+    """指定した hash の 版の hash -> (マップの記録, 版の記録)（1 回のストリーミングで読む）。"""
     want, out = set(hashes), {}
     for m in read_jsonl(catalogue):
         for v in m["versions"]:
@@ -31,8 +31,8 @@ def records_for(catalogue: Path, hashes) -> dict:
 
 
 def load_meta(catalogue: Path, cache: Path) -> dict:
-    """version hash -> display metadata for every catalogue version; cached as JSON next to the store.
-    Titles/artists are for display and record linking only, never similarity features (OctantSpecs octantvector/design.md)."""
+    """カタログのすべての版の 版の hash -> 表示用のメタデータ。ストアの隣に JSON でキャッシュする。
+    曲名とアーティストは表示と記録の照合にだけ使い、似ているかの特徴にはしない（OctantSpecs 法 3.2）。"""
     if cache.exists() and cache.stat().st_mtime >= Path(catalogue).stat().st_mtime:
         return json.loads(cache.read_text())
     out = {}

@@ -1,48 +1,45 @@
-"""Files of the distributed DB (OctantSpecs contracts/, contract 2 (DB build to recommendation core)): writing a full DB, a diff against an earlier one,
-and applying a diff. Generation (generation/dbrelease.py) and the runtime (apply_diff) share this code, so "a full"
-and "the previous full + a diff" are written by the same function.
+"""配布 DB のファイル（OctantSpecs contracts/、契約2（DB build to recommendation core））: 全量の DB を書く、前の DB との
+差分を書く、差分を当てる。生成側（generation/dbrelease.py）と推薦側（apply_diff）がこのコードを共有するので、
+「全量」と「前の全量 + 差分」は同じ関数で書かれる。
 
-The content of a DB, independent of its files:
+ファイルによらない DB の中身:
   maps        {hash: (artist, mapper, duration_s, published_at)}
-  charts      {hash: [(characteristic, difficulty, nps, njs, pass, tech, play_style), ...]} in catalogue order
-  superseded  {old version hash: current version hash of the same map}
-  views       {"id@version": {"meta": {...}, "vecs": {key: float16 vector}}}; the key is the version hash for a
-              view with "maps" rows and the chart key (charts.py) for one with "charts" rows
-  relations   {"id@version": {"meta": {...}, "members": {hash: (member, ...)}, "pairs": [(a, b, score), ...]}}: the
-              relation views (contract 2, ビューの種類): what each map version belongs to (an artist ID) and a score
-              for pairs of members, directed, sorted. Their rows are always "maps"
-  calibration the calibration JSON (lists, not arrays)
-  presets     the hands (手札) to put in the manifest, or None (OctantSpecs plans/presets.md §8). A diff always carries
-              the whole list (null when there is none), so applying it gives the new version's hands
-  notice      the DB's terms and credits as one Markdown text (manifest `notice`), or None; carried by a diff like
-              the hands. What one view owes its sources is that view's `credits` (a list of plain-text lines in its
-              meta), so a view keeps its credits wherever it goes
-  chart_metrics  the manifest's chartMetrics (which computation filled each metric column of charts.parquet)
-  extra_cols  {"maps": [field], "charts": [field]}: columns of those tables this version does not know; their values
-              follow the known ones in each row
-  extra       manifest fields this version does not know
-  schema      the schemaVersion to write, when not this version's (a diff of a newer minor version applied)
-Rows are written in hash order, so row numbers depend only on the content. A "charts" view's row numbers point into
-charts.parquet, a "maps" view's into maps.parquet. A relation view is a members table (row, member) and a pairs
-table (a, b, score) instead of vectors; it is not calibrated.
+  charts      {hash: [(characteristic, difficulty, nps, njs, pass, tech, play_style), ...]}。カタログの順
+  superseded  {旧い版の hash: 同じマップの現行版の hash}
+  views       {"id@version": {"meta": {...}, "vecs": {key: vector}}}。キーは "maps" の行のビューなら版の hash、
+              "charts" の行のビューなら譜面のキー（charts.py）。ベクトルは meta の "dtype" の型: float16 か、次元ごとに
+              meta の "scale" を持つ int8（値に尺度を掛ける）
+  relations   {"id@version": {"meta": {...}, "members": {hash: (member, ...)}, "pairs": [(a, b, score), ...]}}:
+              関係のビュー（契約2、ビューの種類）: マップの各版が何に属するか（アーティスト ID）と、メンバーの対の点
+              （向き付き、並べたもの）。行はいつも "maps"
+  calibration 較正の JSON（配列ではなく list）
+  presets     マニフェストに入れる手札、または None。差分はいつも一覧全体を運ぶ（なければ null）ので、当てると
+              新しい版の手札になる
+  notice      DB の条件とクレジットの 1 つの Markdown の文（マニフェストの `notice`）、または None。差分は手札と同じく
+              運ぶ。1 つのビューが出所に負うものは、そのビューの `credits`（meta にある素の文の行の list）なので、
+              ビューはどこへ行ってもクレジットを持つ
+  chart_metrics  マニフェストの chartMetrics（charts.parquet の指標の列をどの計算が埋めたか）
+  extra_cols  {"maps": [field], "charts": [field]}: この版が知らない、その表の列。値は各行で知っている列の後に続く
+  extra       この版が知らないマニフェストの欄
+  schema      書く schemaVersion。この版のものでないとき（新しいマイナー版の差分を当てた）
+行は hash の順に書くので、行の番号は中身だけで決まる。"charts" のビューの行の番号は charts.parquet を、"maps" の
+ビューのものは maps.parquet を指す。関係のビューはベクトルの代わりにメンバーの表 (row, member) と対の表
+(a, b, score) を持ち、較正しない。
 
-A diff (manifest "kind": "diff") holds the rows that were added or changed (changed.parquet lists them; maps.parquet,
-charts.parquet and each view's vectors carry them), the hashes that left (deleted.parquet) and the whole superseded
-table (small, and replacing it is simpler than patching it). It can also add a view (all of its rows: a view pack),
-replace a view by another version of the same encoder, or remove one (contract 2, 差分更新). Relation views travel
-whole in every diff ("change": "added", replacing the base's view of the same id), since their members change with
-the maps and they are small; a diff with a relation view therefore carries every map row. It is only made when
-every view both versions have keeps its fingerprint and calibration statistics and the values are normalised the same
-way (the calibration's normalisation version); otherwise a full is needed.
+差分（マニフェストの "kind": "diff"）は、足したか変えた行（changed.parquet が挙げ、maps.parquet、charts.parquet、
+各ビューのベクトルが運ぶ）、出ていった hash（deleted.parquet）、superseded の表全体（小さく、置き換えるほうが継ぎ
+当てるより簡単）を持つ。ビューを足す（その全部の行: ビューのパック）、同じエンコーダーの別の版で置き換える、外す
+こともできる（契約2、差分更新）。関係のビューは、メンバーがマップとともに変わり、小さいので、どの差分でも丸ごと
+運ぶ（"change": "added"。base の同じ id のビューを置き換える）。だから関係のビューを持つ差分は、マップのすべての行を
+運ぶ。差分を作るのは、両方の版にあるどのビューも fingerprint と較正の統計を保ち、値の正規化が同じ（較正の正規化の
+版）ときだけ。そうでなければ全量が要る。
 
-"The previous full + a diff" must be the new full even when the DB is newer than this OctantVector (OctantSpecs
-octantvector/law.md 2.4), so what this version does not know is carried as it is: columns of maps.parquet and
-charts.parquet, manifest fields (a diff's manifest carries every field its full has, apart from the FIELDS that
-differ between the two) and per-view fields. What it cannot carry is never dropped silently: a view whose rows it
-does not know (it cannot renumber them), a file or a column of superseded.parquet it does not know, a manifest field
-only the base has, or tables whose unknown columns differ between the base and the diff make apply_diff refuse, so
-the caller takes the full instead. A release whose previous version holds anything this version does not know is a
-full (dbrelease.py).
+「前の全量 + 差分」は、DB がこの OctantVector より新しくても新しい全量にならなければならない（OctantSpecs 法 2.4）
+ので、この版の知らないものはそのまま運ぶ: maps.parquet と charts.parquet の列、マニフェストの欄（差分の
+マニフェストは、2 つで違う FIELDS を除き、全量の持つすべての欄を運ぶ）、ビューごとの欄。運べないものを黙って
+落とすことはしない: 行を知らないビュー（番号を振り直せない）、知らないファイルや superseded.parquet の列、base だけに
+あるマニフェストの欄、base と差分で知らない列が違う表があれば、apply_diff は断り、呼ぶ側は代わりに全量を取る。
+前の版がこの版の知らないものを持つリリースは全量になる（dbrelease.py）。
 """
 import hashlib
 import json
@@ -52,17 +49,32 @@ import numpy as np
 
 from . import charts as chartids
 
-SCHEMA_VERSION = "1.1"
-INDEX_VERSION = "1.1"  # the contract 5 (OctantHarvest to OctantCompass) index (indexVersion)
+SCHEMA_VERSION = "2.0"  # 2.0: int8 のビュー（meta の "dtype"、"scale"）。1.x の読み手は読み違える
+INDEX_VERSION = "1.1"  # 契約5（OctantHarvest to OctantCompass）の索引（indexVersion）
 MAP_COLS = (("artist", "string"), ("mapper", "string"), ("duration_s", "float64"), ("published_at", "string"))
 CHART_COLS = (("characteristic", "string"), ("difficulty", "string"), ("nps", "float64"),
               ("njs", "float64"), ("pass", "float64"), ("tech", "float64"), ("play_style", "string"))
-ROW_KINDS = ("maps", "charts")  # the tables a view's rows can point into
+ROW_KINDS = ("maps", "charts")  # ビューの行が指せる表
 FIELDS = ("schemaVersion", "kind", "dbVersion", "builtAt", "baseDbVersion", "diffsSinceFull", "calibrationId",
-          "calibrationFile", "counts", "views", "removedViews", "chartMetrics", "presets", "notice", "files")  # known ones
-VIEW_FILE_KEYS = ("file", "rowsFile", "membersFile", "pairsFile", "change", "replaces")  # where a view entry's data
-# is, not what the view is
-VIEW_KINDS = ("vector", "relation")  # contract 2 ビューの種類; a view without "kind" is a vector view
+          "calibrationFile", "counts", "views", "removedViews", "chartMetrics", "presets", "notice", "files")  # 知っているもの
+VIEW_FILE_KEYS = ("file", "rowsFile", "membersFile", "pairsFile", "change", "replaces")  # ビューの項目のデータがどこにあるかを示すキー
+# （ビューが何かは示さない）
+VIEW_KINDS = ("vector", "relation")  # 契約2 ビューの種類。"kind" のないビューはベクトルのビュー
+
+
+DTYPES = ("float16", "int8")  # ベクトルのビューの "dtype"（契約2）。int8 のビューは "scale" も持つ
+
+
+def vector_dtype(v):
+    """ベクトルのビューの値の numpy の型。この版が使えない dtype か int8 の尺度なら FormatError。"""
+    dtype = v.get("dtype", "float16")
+    if dtype not in DTYPES:
+        raise FormatError(f"vector dtype {dtype!r} is not one of {', '.join(DTYPES)}")
+    if dtype == "int8":
+        sc = v.get("scale")
+        if not isinstance(sc, list) or len(sc) != v.get("dim") or not all(isinstance(x, (int, float)) and x > 0 for x in sc):
+            raise FormatError("an int8 view needs a positive scale for each of its dimensions")
+    return np.dtype(dtype)
 
 
 def view_kind(v):
@@ -74,8 +86,8 @@ class FormatError(Exception):
 
 
 class VersionError(FormatError):
-    """A file declares a format version this OctantVector does not read (OctantSpecs contracts/, 契約の版).
-    `what` names the format, `found` the declared version, `reads` the versions this OctantVector reads."""
+    """ファイルが、この OctantVector の読めない形式の版を宣言している（OctantSpecs contracts/、契約の版）。
+    `what` は形式、`found` は宣言された版、`reads` はこの OctantVector が読む版。"""
 
     def __init__(self, what, found, reads, where=""):
         self.what, self.found, self.reads = what, found, reads
@@ -97,7 +109,7 @@ def empty():
 
 
 def row_keys(content, hashes, rows):
-    """Keys of a view's possible rows, in file order: the hashes ("maps") or their chart keys ("charts")."""
+    """ビューのあり得る行のキー。ファイルの順: hash（"maps"）か、その譜面のキー（"charts"）。"""
     if rows == "charts":
         return [chartids.key(h, r[0], r[1]) for h in hashes for r in content["charts"].get(h, [])]
     return list(hashes)
@@ -107,7 +119,7 @@ def view_keys_of(content, h, rows):
     return row_keys(content, [h], rows)
 
 
-# ---- writing ------------------------------------------------------------------------------------------------------
+# ---- 書く ------------------------------------------------------------------------------------------------------
 
 def _table(cols, rows, hashes, extra=()):
     import pyarrow as pa
@@ -117,7 +129,7 @@ def _table(cols, rows, hashes, extra=()):
 
 
 def _write_rows(tmp, content, hashes):
-    """maps, charts and view files for `hashes` (sorted). -> per-view manifest entries."""
+    """`hashes`（並べたもの）の maps、charts、ビューのファイル。-> ビューごとのマニフェストの項目。"""
     import pyarrow as pa
     import pyarrow.parquet as pq
     extra = content.get("extra_cols", {})
@@ -138,7 +150,8 @@ def _write_rows(tmp, content, hashes):
         keys = keys_of[v["meta"].get("rows", "maps")]
         rows = np.array([n for n, k in enumerate(keys) if k in vecs], np.int32)
         dim = v["meta"]["dim"]
-        x = np.stack([vecs[keys[n]] for n in rows]).astype(np.float16) if len(rows) else np.zeros((0, dim), np.float16)
+        dtype = vector_dtype(v["meta"])
+        x = np.stack([vecs[keys[n]] for n in rows]).astype(dtype) if len(rows) else np.zeros((0, dim), dtype)
         np.save(tmp / "views" / f"{key}.npy", x)
         np.save(tmp / "views" / f"{key}.rows.npy", rows)
         views[key] = {**v["meta"], "file": f"views/{key}.npy", "rowsFile": f"views/{key}.rows.npy"}
@@ -162,7 +175,7 @@ def _finish(tmp, out, manifest):
     manifest["files"] = {str(p.relative_to(tmp)).replace("\\", "/"): sha256(p)
                          for p in sorted(tmp.rglob("*")) if p.is_file()}
     (tmp / "manifest.json").write_text(json.dumps(manifest, indent=1))
-    tmp.rename(out)  # the folder appears only once complete
+    tmp.rename(out)  # フォルダはそろってから現れる
     return out
 
 
@@ -178,7 +191,7 @@ def _start(out):
 
 
 def write_full(out, content, db_version, built_at, diffs_since_full=0):
-    """A full DB. diffs_since_full: how many diffs led to this content since the last published full (0 for one)."""
+    """全量の DB。diffs_since_full: 最後に出した全量からこの中身までの差分の数（全量なら 0）。"""
     out, tmp = _start(out)
     hashes = sorted(content["maps"])
     views = _write_rows(tmp, content, hashes)
@@ -201,15 +214,14 @@ def write_full(out, content, db_version, built_at, diffs_since_full=0):
 
 
 def normalisation(cal):
-    """The normalisation version a calibration was made with (generation/normalisation.py). The first, 1, is not
-    written, so the calibrations made before the version existed keep their ids."""
+    """較正を作ったときの正規化の版（generation/normalisation.py）。最初の 1 は書かないので、版ができる前に作った較正は
+    id が変わらない。"""
     return cal.get("normalisation", 1)
 
 
 def diffable(base_manifest, base_cal, content):
-    """Why a diff from base to content is impossible (None when it is possible): the calibrations must share their
-    normalisation version, and every view both have must keep its fingerprint and calibration statistics. Views may
-    be added, replaced by another version or removed."""
+    """base から content への差分が作れない理由（作れれば None）: 較正の正規化の版が同じで、両方にあるどのビューも
+    fingerprint と較正の統計を保つこと。ビューは足す、別の版で置き換える、外すことができる。"""
     new_cal = content["calibration"]
     if normalisation(base_cal) != normalisation(new_cal):
         return f"the normalisation changed (version {normalisation(base_cal)} to {normalisation(new_cal)})"
@@ -225,7 +237,7 @@ def diffable(base_manifest, base_cal, content):
 
 
 def view_changes(base_keys, new_keys):
-    """-> ({added key: key it replaces or None}, [removed keys]). A key replaces the base key of the same encoder id."""
+    """-> ({足したキー: それが置き換えるキーか None}, [外したキー])。キーは同じエンコーダーの id の base のキーを置き換える。"""
     by_id = {k.split("@")[0]: k for k in base_keys if k not in new_keys}
     added = {k: by_id.get(k.split("@")[0]) for k in new_keys if k not in base_keys}
     removed = sorted(k for k in base_keys if k not in new_keys and k not in added.values())
@@ -233,7 +245,7 @@ def view_changes(base_keys, new_keys):
 
 
 def changes(base, new):
-    """-> (added, replaced, deleted) hashes; rows are compared on the views both contents have."""
+    """-> (足した, 置き換えた, 消した) hash。行は両方の中身にあるビューで比べる。"""
     shared = [k for k in new["views"] if k in base["views"]]
 
     def same(h):
@@ -242,7 +254,7 @@ def changes(base, new):
         for key in shared:
             for k in view_keys_of(new, h, new["views"][key]["meta"].get("rows", "maps")):
                 a, b = base["views"][key]["vecs"].get(k), new["views"][key]["vecs"].get(k)
-                if (a is None) != (b is None) or (a is not None and a.tobytes() != np.asarray(b, np.float16).tobytes()):
+                if (a is None) != (b is None) or (a is not None and a.tobytes() != np.asarray(b, a.dtype).tobytes()):
                     return False
         return True
     added = sorted(set(new["maps"]) - set(base["maps"]))
@@ -252,20 +264,19 @@ def changes(base, new):
 
 
 def write_diff(out, base, base_manifest, new, db_version, built_at):
-    """Rows added or changed, hashes deleted, and views added (all their rows: a view pack), replaced by another
-    version of the same encoder, or removed. A new calibration (the old one plus statistics of added views) travels
-    with the diff."""
+    """足したか変えた行、消した hash、そして足した（その全部の行: ビューのパック）、同じエンコーダーの別の版で置き換えた、
+    外したビュー。新しい較正（古いものに足したビューの統計を加えたもの）を差分と一緒に運ぶ。"""
     why = diffable(base_manifest, base["calibration"], new)
     if why:
         raise FormatError(f"no diff from {base_manifest['dbVersion']}: {why}; a full is needed")
     added, replaced, deleted = changes(base, new)
     new_views, removed_views = view_changes(list(base["views"]), list(new["views"]))
     new_rel, removed_rel = view_changes(list(base.get("relations", {})), list(new.get("relations", {})))
-    new_rel.update({k: None for k in new.get("relations", {}) if k not in new_rel})  # kept relations travel whole too
+    new_rel.update({k: None for k in new.get("relations", {}) if k not in new_rel})  # 残す関係も丸ごと運ぶ
     removed_views = sorted(removed_views + removed_rel)
     out, tmp = _start(out)
     changed = sorted(added + replaced)
-    # a new view, or any relation view, needs every row it has
+    # 新しいビューと、どの関係のビューも、持つ行のすべてが要る
     rows = sorted(set(changed) | (set(new["maps"]) if new_views or new_rel else set()))
     rows_set, changed_set = set(rows), set(changed)
     sub = {**new, "maps": {h: new["maps"][h] for h in rows},
@@ -295,12 +306,12 @@ def write_diff(out, base, base_manifest, new, db_version, built_at):
     return _finish(tmp, out, manifest)
 
 
-# ---- reading ------------------------------------------------------------------------------------------------------
+# ---- 読む ------------------------------------------------------------------------------------------------------
 
 def read_manifest(path, kind=None, *, check_files=True):
-    """The manifest of the DB version at path, refused when its schemaVersion major is not this one's or it is not a
-    `kind`. check_files: also check that every file it lists is there with its SHA-256 (False only to show what a
-    version says without using it: read_info)."""
+    """path にある DB の版のマニフェスト。schemaVersion のメジャーがこの版のものでないか、`kind` でなければ断る。
+    check_files: 挙げたどのファイルも SHA-256 が合ってそこにあるかも確かめる（False は、版が何を言うかを使わずに
+    見せるときだけ: read_info）。"""
     path = Path(path)
     try:
         m = json.loads((path / "manifest.json").read_text())
@@ -330,18 +341,25 @@ def listed(path, m, name):
 
 
 def read_view(path, m, key, n_rows):
-    """A view's vectors as stored and its row numbers, checked against the n_rows rows of its table."""
+    """保存したままのビューのベクトルとその行の番号。表の n_rows 行と照らして確かめる。"""
     v = m["views"][key]
     x = np.load(listed(path, m, v["file"]))
     rows = np.load(listed(path, m, v["rowsFile"]))
     if len(x) != len(rows) or (len(rows) and (rows.min() < 0 or rows.max() >= n_rows)):
         raise FormatError(f"{path}: {key} rows do not match its vectors or the {v['rows']} table")
+    try:
+        dtype = vector_dtype(v)
+    except FormatError as ex:
+        raise FormatError(f"{path}: {key}: {ex}") from None
+    if x.dtype != dtype or x.ndim != 2 or x.shape[1] != v.get("dim"):
+        raise FormatError(f"{path}: {key} holds {x.dtype} {x.shape}, the manifest says {dtype} with {v.get('dim')} "
+                          "dimensions")
     return x, rows
 
 
 def read_relation(path, m, key, n_rows):
-    """A relation view's members ({"row", "member"} columns, rows checked against the n_rows map rows) and pairs
-    ({"a", "b", "score"})."""
+    """関係のビューのメンバー（{"row", "member"} の列。行は n_rows のマップの行と照らして確かめる）と対
+    （{"a", "b", "score"}）。"""
     import pyarrow.parquet as pq
     v = m["views"][key]
     members = pq.read_table(listed(path, m, v["membersFile"]), columns=["row", "member"]).to_pydict()
@@ -353,25 +371,25 @@ def read_relation(path, m, key, n_rows):
 
 
 def read_hashes(path, m):
-    """The map hashes of maps.parquet, in row order."""
+    """maps.parquet のマップの hash。行の順。"""
     import pyarrow.parquet as pq
     return pq.read_table(listed(path, m, "maps.parquet"), columns=["hash"]).column("hash").to_pylist()
 
 
 def read_superseded(path, m):
-    """superseded.parquet as {old version hash: current version hash}."""
+    """superseded.parquet を {旧い版の hash: 現行版の hash} にしたもの。"""
     import pyarrow.parquet as pq
     sup = pq.read_table(listed(path, m, "superseded.parquet"), columns=["hash", "current"]).to_pydict()
     return dict(zip(sup["hash"], sup["current"]))
 
 
 def chart_keys(ch):
-    """The chart key of each row of charts.parquet read as columns (read_charts)."""
+    """列として読んだ charts.parquet の各行の譜面のキー（read_charts）。"""
     return [chartids.key(h, c, d) for h, c, d in zip(ch["hash"], ch["characteristic"], ch["difficulty"])]
 
 
 def read_relations(path, m=None):
-    """Only the relation views of a full DB, as in read_content (a release keeps them when no artist files are given)."""
+    """全量の DB の関係のビューだけ。read_content と同じ形（アーティストのファイルが渡されないとき、リリースはこれを残す）。"""
     m = m or read_manifest(path)
     hashes = read_hashes(path, m)
     out = {}
@@ -393,7 +411,7 @@ def _relation_content(path, m, key, hashes):
 
 
 def _columns(p, cols):
-    """A table as columns, and the fields of the columns this version does not know, in file order."""
+    """列にした表と、この版が知らない列の欄。ファイルの順。"""
     import pyarrow.parquet as pq
     t = pq.read_table(p)
     known = {"hash"} | {c for c, _ in cols}
@@ -401,7 +419,7 @@ def _columns(p, cols):
 
 
 def _files(m):
-    """The files of a manifest this version knows what to do with."""
+    """マニフェストのファイルのうち、この版が扱い方を知っているもの。"""
     names = {"maps.parquet", "charts.parquet", "superseded.parquet", m.get("calibrationFile")}
     names |= {v[k] for v in m.get("views", {}).values() for k in ("file", "rowsFile", "membersFile", "pairsFile")
               if k in v and view_kind(v) in VIEW_KINDS}
@@ -409,9 +427,8 @@ def _files(m):
 
 
 def read_content(path, m=None):
-    """Content of a full DB or of a diff (checked first). What this version cannot carry is left out and listed in
-    "unread" as (what, name): a view whose rows it does not know, a file it does not know, a column of
-    superseded.parquet."""
+    """全量の DB か差分の中身（先に確かめる）。この版が運べないものは外し、"unread" に (何か, 名前) で挙げる: 行を知らない
+    ビュー、知らないファイル、superseded.parquet の列。"""
     m = m or read_manifest(path)
     c = empty()
     c["unread"] = [("file", n) for n in sorted(set(m.get("files", {})) - _files(m))]
@@ -428,8 +445,7 @@ def read_content(path, m=None):
     c["unread"] += [("column", f"superseded.parquet {f.name}") for f in extra]
     keys_of = {"maps": hashes, "charts": chart_keys(ch)}
     for key, v in m.get("views", {}).items():
-        if v.get("rows") not in ROW_KINDS or view_kind(v) not in VIEW_KINDS \
-                or (view_kind(v) == "relation" and v["rows"] != "maps"):
+        if not _readable(v):
             c["unread"].append(("view", key))
             continue
         if view_kind(v) == "relation":
@@ -449,7 +465,7 @@ def read_content(path, m=None):
 
 
 def unknown(content):
-    """What a content read by read_content holds that this OctantVector does not know, carried or not (descriptions)."""
+    """read_content が読んだ中身のうち、この OctantVector が知らないもの。運べるかによらず（説明）。"""
     return ([f"{what} {name}" for what, name in content.get("unread", [])]
             + [f"column {table}.parquet {f.name}" for table, fields in content["extra_cols"].items() for f in fields]
             + [f"manifest field {k}" for k in content["extra"]])
@@ -458,13 +474,13 @@ def unknown(content):
 def _chart_columns(path):
     ch, extra = _columns(path, CHART_COLS)
     missing = [c for c, _ in CHART_COLS if c not in ch]
-    if missing:  # e.g. a 1.0 DB (no play_style): not read
+    if missing:  # 例 1.0 の DB（play_style がない）: 読まない
         raise FormatError(f"{path}: no column {', '.join(missing)}")
     return ch, extra
 
 
 def read_charts(path):
-    """charts.parquet as columns."""
+    """列にした charts.parquet。"""
     return _chart_columns(path)[0]
 
 
@@ -475,50 +491,207 @@ def _newer(a, b):
         raise FormatError(f"cannot compare schemaVersion {a!r} with {b!r}") from None
 
 
+def _readable(v):
+    """この版がマニフェストのビューの項目を読めるか（read_content はほかを unread として外す）。"""
+    if v.get("rows") not in ROW_KINDS or view_kind(v) not in VIEW_KINDS:
+        return False
+    return view_kind(v) != "relation" or v["rows"] == "maps"
+
+
+def _schema_extra(p, cols):
+    """この版が知らない表の列の欄。ファイルの順で、スキーマだけから読む。"""
+    import pyarrow.parquet as pq
+    known = {"hash"} | {c for c, _ in cols}
+    return [f for f in pq.read_schema(p) if f.name not in known]
+
+
+def _cannot_carry(base_path, bm, diff_path, dm):
+    """apply_diff が失うもの（説明）。マニフェストと表のスキーマから: 両方の read_content を比べるのと同じ断り方。"""
+    extra = {}
+    for path, m in ((base_path, bm), (diff_path, dm)):
+        extra[path] = {t: _schema_extra(listed(path, m, f"{t}.parquet"), MAP_COLS if t == "maps" else CHART_COLS)
+                       for t in ROW_KINDS}
+    unread_files = lambda m: sorted(set(m.get("files", {})) - _files(m))  # noqa: E731
+    sup = _schema_extra(listed(diff_path, dm, "superseded.parquet"), (("current", "string"),))
+    unread = [("file", n) for n in unread_files(dm)] + [("view", k) for k, v in dm.get("views", {}).items()
+                                                         if not _readable(v)]
+    unread += [("column", f"superseded.parquet {f.name}") for f in sup]
+    base_extra = [k for k in bm if k not in FIELDS]
+    vector = lambda m: {k for k, v in m.get("views", {}).items() if _readable(v) and view_kind(v) == "vector"}  # noqa: E731
+    return ([f"{what} {name}" for what, name in unread]
+            + [f"file {name} of the base" for name in unread_files(bm)]
+            + [f"manifest field {k} of the base" for k in base_extra if k not in dm]
+            + [f"the columns of {t}.parquet changed" for t in ROW_KINDS if extra[base_path][t] != extra[diff_path][t]]
+            + [f"rows of view {k}, which the base lacks" for k in sorted(vector(dm) - vector(bm))
+               if dm["views"][k].get("change") != "added"]), extra[diff_path]
+
+
+def _merged_table(base_path, bm, diff_path, dm, name, cols, extra, keep_base, take_diff):
+    """hash が keep_base を通る base の行と、hash が take_diff を通る差分の行を、hash の順に（安定なので、マップの譜面は
+    カタログの順を保つ）、write_full と同じ列で。"""
+    import pyarrow as pa
+    import pyarrow.compute as pc
+    import pyarrow.parquet as pq
+    schema = pa.schema([("hash", pa.string())] + [(c, getattr(pa, t)()) for c, t in cols] + list(extra))
+    parts = []
+    for path, m, keep in ((base_path, bm, keep_base), (diff_path, dm, take_diff)):
+        t = pq.read_table(listed(path, m, name))
+        missing = [c for c in schema.names if c not in t.column_names]
+        if missing:
+            raise FormatError(f"{path}: no column {', '.join(missing)} in {name}")
+        t = t.select(schema.names).cast(schema)
+        parts.append(t.filter(keep(t.column("hash"))))
+    t = pa.concat_tables(parts)
+    return t.take(pc.sort_indices(t, [("hash", "ascending")]))
+
+
+def _relation_tables(path, m, key, hashes, new_hashes):
+    """マップ new_hashes（arrow の配列、並べたもの）について write_full が書くのと同じ形の、差分の関係のビュー: メンバー
+    （new_hashes での行, member）を並べたものと、並べた対。"""
+    import pyarrow as pa
+    import pyarrow.compute as pc
+    import pyarrow.parquet as pq
+    v = m["views"][key]
+    members = pq.read_table(listed(path, m, v["membersFile"]), columns=["row", "member"])
+    pairs = pq.read_table(listed(path, m, v["pairsFile"]), columns=["a", "b", "score"])
+    rows = members.column("row")
+    if len(rows) and (pc.min(rows).as_py() < 0 or pc.max(rows).as_py() >= len(hashes)):
+        raise FormatError(f"{path}: {key} members point outside the maps table")
+    pos = pc.index_in(hashes.take(rows), value_set=new_hashes)
+    keep = pc.is_valid(pos)
+    members = pa.table({"row": pc.cast(pos.filter(keep), pa.int32()),
+                        "member": pc.cast(members.column("member").filter(keep), pa.string())})
+    members = members.take(pc.sort_indices(members, [("row", "ascending"), ("member", "ascending")]))
+    pairs = pa.table({"a": pc.cast(pairs.column("a"), pa.string()), "b": pc.cast(pairs.column("b"), pa.string()),
+                      "score": pc.cast(pairs.column("score"), pa.float32())})
+    pairs = pairs.take(pc.sort_indices(pairs, [("a", "ascending"), ("b", "ascending"), ("score", "ascending")]))
+    return members, pairs
+
+
+def _row_key_array(t, rows):
+    """maps か charts の表の行のキーを arrow の配列で: hash か、譜面のキー（charts.key）。"""
+    import pyarrow.compute as pc
+    if rows == "charts":
+        return pc.binary_join_element_wise(t.column("hash"), t.column("characteristic"), t.column("difficulty"),
+                                           chartids.SEP)
+    return t.column("hash")
+
+
 def apply_diff(base_path, diff_path, out):
-    """Write base + diff as a new full DB at `out` (contract 5: prepared in another folder, switched to only after
-    it is complete). Both are checked first; the diff must start from the base's dbVersion. What this OctantVector does
-    not know is carried; when it cannot be carried, FormatError, and the caller takes the full instead."""
+    """base + 差分を、`out` に新しい全量の DB として書く（契約5: 別のフォルダで用意し、そろってから切り替える）。先に両方を
+    確かめる。差分は base の dbVersion から始まること。この OctantVector が知らないものは運ぶ。運べなければ FormatError
+    で、呼ぶ側は代わりに全量を取る。
+
+    結果は、read_content が返す中身について write_full が書くもの（消しも変えもしない base の行、差分の変えた行、差分の
+    ビュー、差分の関係のビューを丸ごと）と同じだが、表ごと、ビューごとに配列で計算するので、メモリにあるのは一度に
+    1 つのビューのベクトルだけ。base の関係のビューは読まない。"""
+    import pyarrow as pa
+    import pyarrow.compute as pc
     import pyarrow.parquet as pq
     bm, dm = read_manifest(base_path, "full"), read_manifest(diff_path, "diff")
     if dm["baseDbVersion"] != bm["dbVersion"]:
         raise FormatError(f"the diff {dm['dbVersion']} starts from {dm['baseDbVersion']}, not {bm['dbVersion']}")
-    base, d = read_content(base_path, bm), read_content(diff_path, dm)
-    cant = [f"{what} {name}" for what, name in d["unread"]] \
-        + [f"{what} {name} of the base" for what, name in base["unread"] if what == "file"] \
-        + [f"manifest field {k} of the base" for k in base["extra"] if k not in d["extra"]] \
-        + [f"the columns of {t}.parquet changed" for t in ROW_KINDS if base["extra_cols"][t] != d["extra_cols"][t]] \
-        + [f"rows of view {k}, which the base lacks" for k in d["views"]
-           if k not in base["views"] and dm["views"][k].get("change") != "added"]
+    cant, extra_cols = _cannot_carry(base_path, bm, diff_path, dm)
     if cant:
         raise FormatError(f"this OctantVector cannot apply the diff {dm['dbVersion']} without losing what it does not "
                           f"know ({'; '.join(cant)}); take the full of {dm['dbVersion']} instead")
-    d["calibration"] = d["calibration"] or base["calibration"]
-    if d["calibration"]["id"] != dm["calibrationId"]:
+    base_cal = json.loads(listed(base_path, bm, bm["calibrationFile"]).read_text())
+    cal = json.loads(listed(diff_path, dm, dm["calibrationFile"]).read_text()) if dm.get("calibrationFile") else base_cal
+    if cal["id"] != dm["calibrationId"]:
         raise FormatError(f"the diff {dm['dbVersion']} needs calibration {dm['calibrationId']}")
-    why = diffable(bm, base["calibration"], d)
+    vector_keys = [k for k, v in dm.get("views", {}).items() if view_kind(v) == "vector"]
+    meta = {k: {a: x for a, x in dm["views"][k].items() if a not in VIEW_FILE_KEYS} for k in vector_keys}
+    why = diffable(bm, base_cal, {"calibration": cal, "views": {k: {"meta": meta[k]} for k in vector_keys}})
     if why:
         raise FormatError(f"the diff does not fit the base: {why}")
-    changed = set(pq.read_table(listed(diff_path, dm, "changed.parquet")).column("hash").to_pylist())
-    gone = set(pq.read_table(listed(diff_path, dm, "deleted.parquet")).column("hash").to_pylist()) | changed
-    new = empty()
-    new["calibration"] = d["calibration"]
-    new["superseded"] = d["superseded"]
-    new["presets"] = d["presets"] if "presets" in dm else base["presets"]
-    new["notice"] = d["notice"] if "notice" in dm else base["notice"]
-    new.update(schema=_newer(SCHEMA_VERSION, dm["schemaVersion"]), chart_metrics=d["chart_metrics"],
-               extra_cols=d["extra_cols"], extra=d["extra"])
-    for part in ("maps", "charts"):
-        new[part] = {h: r for h, r in base[part].items() if h not in gone}
-        new[part].update({h: r for h, r in d[part].items() if h in changed})
-    for key, v in d["views"].items():
-        if dm["views"][key].get("change") == "added":
-            vecs = v["vecs"]
-        else:
-            vecs = {h: x for h, x in base["views"][key]["vecs"].items() if chartids.key_hash(h) not in gone}
-            vecs.update(v["vecs"])
-        new["views"][key] = {"meta": v["meta"],
-                             "vecs": {h: x for h, x in vecs.items() if chartids.key_hash(h) in new["maps"]}}
-    for key, r in d["relations"].items():  # whole in every diff
-        new["relations"][key] = {**r, "members": {h: x for h, x in r["members"].items() if h in new["maps"]}}
-    return write_full(out, new, dm["dbVersion"], dm["builtAt"], bm.get("diffsSinceFull", 0) + 1)
+    column = lambda name: pq.read_table(listed(diff_path, dm, name), columns=["hash"]).column("hash").combine_chunks()  # noqa: E731
+    changed = pc.unique(column("changed.parquet"))
+    gone = pc.unique(pa.concat_arrays([column("deleted.parquet"), changed]))
+    keep_base = lambda h: pc.invert(pc.is_in(h, value_set=gone))  # noqa: E731
+    take_diff = lambda h: pc.is_in(h, value_set=changed)  # noqa: E731
+    out, tmp = _start(out)
+    try:
+        tables = {t: _merged_table(base_path, bm, diff_path, dm, f"{t}.parquet", MAP_COLS if t == "maps" else CHART_COLS,
+                                   extra_cols[t], keep_base, take_diff) for t in ROW_KINDS}
+        hashes = tables["maps"].column("hash").combine_chunks()
+        charts = tables["charts"].filter(pc.is_in(tables["charts"].column("hash"), value_set=hashes))
+        pq.write_table(tables["maps"], tmp / "maps.parquet")
+        pq.write_table(charts, tmp / "charts.parquet")
+        n_charts = len(charts)
+        new_keys = {"maps": hashes, "charts": _row_key_array(charts, "charts").combine_chunks()}
+        del tables, charts
+        sup = pq.read_table(listed(diff_path, dm, "superseded.parquet"), columns=["hash", "current"])
+        sup = sup.cast(pa.schema([("hash", pa.string()), ("current", pa.string())]))
+        sup = sup.take(pc.sort_indices(sup, [("hash", "ascending")]))
+        pq.write_table(sup, tmp / "superseded.parquet")
+        (tmp / "views").mkdir()
+        sides = {}
+        for side, path, m in (("base", base_path, bm), ("diff", diff_path, dm)):
+            cols = {"maps": ["hash"], "charts": ["hash", "characteristic", "difficulty"]}
+            sides[side] = (path, m, {t: _row_key_array(pq.read_table(listed(path, m, f"{t}.parquet"), columns=c), t)
+                                     .combine_chunks() for t, c in cols.items()})
+        views = {}
+        for key in vector_keys:
+            v = dm["views"][key]
+            rows_kind, dtype = v["rows"], vector_dtype(v)
+            sources = [("diff", None)] if v.get("change") == "added" else [("diff", None), ("base", keep_base)]
+            xs, ks = [], []
+            for side, keep in sources:
+                path, m, keys_of = sides[side]
+                keys = keys_of[rows_kind]
+                x, rows = read_view(path, m, key, len(keys))
+                k = keys.take(pa.array(rows, pa.int32()))
+                if keep is not None:
+                    sel = keep(k if rows_kind == "maps" else  # 譜面のキーのマップ: chartids.key_hash
+                               pc.list_element(pc.split_pattern(k, chartids.SEP, max_splits=1), 0))
+                    sel = np.asarray(sel.to_numpy(zero_copy_only=False), bool)
+                    x, k = x[sel], k.filter(pa.array(sel))
+                xs.append(x)
+                ks.append(k)
+            cand = pa.concat_arrays(ks)
+            idx = pc.index_in(new_keys[rows_kind], value_set=cand)  # 差分の行を先に: 差分が勝つ
+            found = np.asarray(pc.is_valid(idx).to_numpy(zero_copy_only=False), bool)
+            rows = np.flatnonzero(found).astype(np.int32)
+            pick = np.asarray(idx.filter(pa.array(found)).to_numpy(zero_copy_only=False), np.int64)
+            x = np.empty((len(rows), v["dim"]), dtype)
+            start = 0
+            for part in xs:
+                sel = (pick >= start) & (pick < start + len(part))
+                x[sel] = part[pick[sel] - start].astype(dtype, copy=False)
+                start += len(part)
+            del xs, ks, cand, idx, pick
+            np.save(tmp / "views" / f"{key}.npy", x)
+            np.save(tmp / "views" / f"{key}.rows.npy", rows)
+            del x
+            views[key] = {**meta[key], "file": f"views/{key}.npy", "rowsFile": f"views/{key}.rows.npy"}
+        diff_hashes = sides["diff"][2]["maps"]
+        for key, v in dm.get("views", {}).items():
+            if view_kind(v) != "relation":
+                continue
+            members, pairs = _relation_tables(diff_path, dm, key, diff_hashes, hashes)
+            pq.write_table(members, tmp / "views" / f"{key}.members.parquet")
+            pq.write_table(pairs, tmp / "views" / f"{key}.pairs.parquet")
+            views[key] = {**{a: x for a, x in v.items() if a not in VIEW_FILE_KEYS + ("kind",)}, "kind": "relation",
+                          "rows": "maps", "membersFile": f"views/{key}.members.parquet",
+                          "pairsFile": f"views/{key}.pairs.parquet"}
+        cal_file = f"calibration/{cal['id']}.json"
+        (tmp / "calibration").mkdir()
+        (tmp / cal_file).write_text(json.dumps(cal))
+        presets = dm.get("presets") if "presets" in dm else bm.get("presets")
+        notice = dm.get("notice") if "notice" in dm else bm.get("notice")
+        manifest = {"schemaVersion": _newer(SCHEMA_VERSION, dm["schemaVersion"]), "kind": "full",
+                    "dbVersion": dm["dbVersion"], "builtAt": dm["builtAt"], "baseDbVersion": None,
+                    "diffsSinceFull": bm.get("diffsSinceFull", 0) + 1, "calibrationId": cal["id"],
+                    "calibrationFile": cal_file,
+                    "counts": {"maps": len(hashes), "charts": n_charts, "superseded": len(sup)},
+                    "views": views, "chartMetrics": dm.get("chartMetrics") or {}}
+        if presets:
+            manifest["presets"] = presets
+        if notice:
+            manifest["notice"] = notice
+        manifest.update({k: x for k, x in dm.items() if k not in FIELDS})
+        return _finish(tmp, out, manifest)
+    except BaseException:
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise

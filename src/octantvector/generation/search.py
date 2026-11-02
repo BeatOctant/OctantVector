@@ -1,22 +1,18 @@
-"""Weighted multi-view cosine k-NN with optional CSLS hub reduction.
+"""複数ビューの重み付きコサインの k-NN。CSLS でハブを抑えることもできる。
 
-Each view is normalised on its own (normalisation.py; encoder.norm: "center" = centre + L2, "zscore" = z-score +
-L2). The statistics come from a calibration file when one is given (calibration.py), so the coordinates do not move
-when rows are added; otherwise they are computed from the rows loaded. The combined score is the weighted mean of
-per-view cosines; with missing="drop" only hashes present in every view are indexed and the views are scaled by
-sqrt(w / sum(w)) and concatenated, which gives the same score in one product.
+各ビューはそれぞれ正規化する（normalisation.py。encoder.norm: "center" = 中心を引いて L2、"zscore" = z スコアに
+して L2）。統計は、較正のファイルを渡せばそこから取る（calibration.py）ので、行を足しても座標は動かない。渡さ
+なければ読み込んだ行から計算する。合わせた点はビューごとのコサインの重み付き平均。missing="drop" では、すべての
+ビューにある hash だけを索引に入れ、各ビューに sqrt(w / sum(w)) を掛けてつなぐ。そうすると 1 回の積で同じ点になる。
 
-With missing="reweight" a hash is kept if its views carry at least `min_weight` of the total weight. A view missing
-on either side of a pair counts as cosine 0 with its full weight (the score is divided by the total weight, not by
-the shared weight), so a pair that shares fewer views cannot outrank one that shares them all by agreeing on a
-light view alone. search_views() returns the
-top-k of each view on its own (the base output); the weighted combination is the layer on top (query_rows), and
-its weights can change per request. Similarity/top-k run in row chunks on CUDA via torch when available (device
-"auto"), otherwise numpy; results are numpy either way.
+missing="reweight" では、ビューの重みが全体の `min_weight` 以上ある hash を残す。対のどちらかにないビューは、
+重みをそのままにコサイン 0 と数える（点は共通の重みではなく全体の重みで割る）ので、共通のビューが少ない対が、
+軽いビュー 1 つで一致しただけで、全部を共通に持つ対を上回ることはない。search_views() は各ビュー単独の上位 k を
+返す（土台の出力）。重み付きの組み合わせはその上の層（query_rows）で、重みは要求ごとに変えられる。似ている度合いと
+上位 k は、使えれば torch で CUDA の上で行の塊ごとに計算し（device "auto"）、なければ numpy。結果はどちらでも numpy。
 
-The index is map-level (an experiment tool: search, eval-neighbours, eval-personal). A view with chart rows is
-represented by one chart per map version, the hardest Standard difficulty (charts.representative); the distributed
-DB keeps every chart (runtime/db.py).
+索引はマップ単位（実験用の道具: search、eval-neighbours、eval-personal）。譜面の行を持つビューは、マップの版ごとに
+1 つの譜面（一番難しい Standard の難易度。charts.representative）で表す。配布 DB はすべての譜面を持つ（runtime/db.py）。
 """
 import numpy as np
 
@@ -30,7 +26,7 @@ CHUNK = 2048
 
 
 def parse_views(spec: str) -> dict:
-    """'clap_htsat_unfused:0.5,meta_tags:0.5' -> {id: weight} (weight defaults to 1)."""
+    """'clap_htsat_unfused:0.5,meta_tags:0.5' -> {id: 重み}（重みの既定は 1）。"""
     out = {}
     for part in spec.split(","):
         i, _, w = part.partition(":")
@@ -39,7 +35,7 @@ def parse_views(spec: str) -> dict:
 
 
 def resolve_device(device="auto"):
-    """The CUDA device for the setting `device` ("auto" or "cpu"), or None when it is "cpu" or there is none."""
+    """設定 `device`（"auto" か "cpu"）に対する CUDA のデバイス。"cpu" か、デバイスがなければ None。"""
     if device == "cpu":
         return None
     try:
@@ -58,9 +54,9 @@ def _topk_np(s, k):
 class Index:
     def __init__(self, weights: dict, store_root, restrict=None, device="auto", vectors=None, calibration=None,
                  missing="drop", min_weight=DEFAULTS["minViewWeight"]):
-        """weights: {encoder id: weight}. vectors: optional {encoder id: (hashes, array)} instead of reading stores.
-        calibration: a calibration (calibration.load) holding fixed statistics for every view.
-        missing: "drop" (only hashes in every view) or "reweight" (see the module docstring)."""
+        """weights: {encoder id: 重み}。vectors: ストアを読む代わりに渡せる {encoder id: (hashes, array)}。
+        calibration: すべてのビューの固定した統計を持つ較正（calibration.load）。
+        missing: "drop"（すべてのビューにある hash だけ）か "reweight"（モジュールの docstring を参照）。"""
         if missing not in ("drop", "reweight"):
             raise ValueError(f"missing must be 'drop' or 'reweight', got {missing!r}")
         raw = {}
@@ -75,7 +71,7 @@ class Index:
         if restrict is not None:
             keep &= set(restrict)
         total = sum(weights.values())
-        if missing == "reweight":  # enough of the weight must be present for a hash to be searchable
+        if missing == "reweight":  # hash を検索に入れるには、重みが十分にそろっていること
             keep = {h for h in keep if sum(weights[i] for i, (_, d) in raw.items() if h in d) >= min_weight * total}
         self.hashes = sorted(keep)
         self.pos = {h: n for n, h in enumerate(self.hashes)}
@@ -109,8 +105,8 @@ class Index:
         return self._vt[view]
 
     def _weighted(self, rows, weights):
-        """Weighted mean of per-view cosines of `rows` to all items; a view missing on either side counts as 0.
-        Pairs with no shared view get -inf."""
+        """`rows` からすべての項目への、ビューごとのコサインの重み付き平均。どちらかにないビューは 0 と数える。
+        共通のビューのない対は -inf。"""
         tot = sum(weights.values())
         if self.device is not None:
             import torch
@@ -131,8 +127,8 @@ class Index:
         return np.where(den > 0, num, -np.inf).astype(np.float32)
 
     def _scores(self, rows, r=None, weights=None):
-        """Similarity of `rows` to all items with self excluded; CSLS-adjusted if r (local densities) is given.
-        weights: per-request {view: weight} (default the index weights)."""
+        """自分を除いた、`rows` からすべての項目への似ている度合い。r（局所の密度）を渡せば CSLS で補正する。
+        weights: 要求ごとの {view: 重み}（既定は索引の重み）。"""
         if weights is not None or self.emb is None:
             s = self._weighted(rows, weights or {v: w for v, (_, w) in self.views.items()})
             if self.device is not None:
@@ -173,7 +169,7 @@ class Index:
         return i, np.take_along_axis(s, i, 1)
 
     def local_density(self, k=10):
-        """CSLS r_i: mean cosine of each item to its k nearest neighbours."""
+        """CSLS の r_i: 各項目から k 近傍へのコサインの平均。"""
         if k not in self._r:
             r = np.empty(len(self), np.float32)
             for a in range(0, len(self), CHUNK):
@@ -183,9 +179,9 @@ class Index:
         return self._r[k]
 
     def view_density(self, view, k=10):
-        """CSLS r_i inside one view only: mean cosine of each item to its k nearest neighbours in that view."""
+        """1 つのビューの中だけでの CSLS の r_i: そのビューでの、各項目から k 近傍へのコサインの平均。"""
         key = (view, k)
-        if key not in self._r and self.emb is None:  # missing views: masked scores; rows without the view get 0
+        if key not in self._r and self.emb is None:  # ないビュー: 点を伏せる。そのビューのない行は 0
             r = np.zeros(len(self), np.float32)
             have = np.flatnonzero(self.present[view])
             for a in range(0, len(have), CHUNK):
@@ -212,14 +208,13 @@ class Index:
         return self._r[key]
 
     def query_rows(self, rows, k=10, csls=True, csls_k=10, weights=None):
-        """Top-k neighbours of the given row indices by the weighted combination -> (indices, scores).
-        weights: per-request {view: weight}; CSLS densities are those of the index weights."""
+        """渡した行の添字の、重み付きの組み合わせでの上位 k の近傍 -> (添字, 点)。
+        weights: 要求ごとの {view: 重み}。CSLS の密度は索引の重みでのもの。"""
         rows = np.asarray(rows)
         return self._topk(self._scores(rows, self.local_density(csls_k) if csls else None, weights), k)
 
     def search_views(self, rows, k=10):
-        """Top-k of each view on its own -> {view: (indices, scores)}; items missing the view are never returned
-        and a row missing it gets an empty result."""
+        """各ビュー単独の上位 k -> {view: (添字, 点)}。そのビューのない項目は返さず、ない行の結果は空。"""
         rows = np.asarray(rows)
         out = {}
         for v in self.views:
@@ -237,7 +232,7 @@ class Index:
         return np.concatenate([p[0] for p in parts]), np.concatenate([p[1] for p in parts])
 
     def view_cosines(self, a, b):
-        """Per-view cosine of items a and b; None where either lacks the view."""
+        """項目 a と b のビューごとのコサイン。どちらかにビューがなければ None。"""
         return {i: float(x[a] @ x[b]) if self.present[i][a] and self.present[i][b] else None
                 for i, (x, _) in self.views.items()}
 

@@ -1,8 +1,9 @@
-"""Leave-one-out evaluation against a player's own liked maps (protocol: OctantSpecs octantvector/design.md).
+"""プレイヤー自身の好意のマップに対する 1 つ抜きの評価。
 
-Candidates = maps the player interacted with that are in the index; liked maps by OctantSpecs law 4.1 (runtime/likes.py,
-the rule recommendations use); everything else unlabeled. For each held-out liked map p, the profile, clusters and difficulty band are fit WITHOUT p, and p is
-ranked among the candidates minus the other liked maps. Reported: hit@10/20, median rank, MRR.
+候補 = プレイヤーが関わったマップのうち索引にあるもの。好意のマップは OctantSpecs 法 4.1 で決める
+（runtime/likes.py。推薦と同じ決まり）。それ以外はラベルなし。好意のマップ p を 1 つずつ抜き、プロファイル、
+クラスター、難易度の幅を p なしで作り、ほかの好意のマップを除いた候補の中で p の順位を付ける。
+出すもの: hit@10/20、順位の中央値、MRR。
 """
 import numpy as np
 
@@ -11,20 +12,20 @@ from .profile import difficulty_band, fit_penalty, spherical_kmeans
 
 
 def view_score(Xc, liked_local, kind="km3", r_hub=None):
-    """z-scored profile score over candidate rows for one view. liked_local: indices into Xc."""
+    """1 つのビューの、候補の行に対する z スコアにしたプロファイルの点。liked_local: Xc への添字。"""
     X = Xc[liked_local]
     if kind == "mean":
         q = X.mean(0)
         s = Xc @ (q / np.linalg.norm(q))
     else:
         s = (Xc @ spherical_kmeans(X, int(kind[2:])).T).max(1)
-    if r_hub is not None:  # CSLS: 2cos - r_q - r_c; r_q is constant per query, so rank by cos - r_c / 2
+    if r_hub is not None:  # CSLS: 2cos - r_q - r_c。r_q はクエリごとに一定なので、cos - r_c / 2 で順位を付ける
         s = s - 0.5 * r_hub
     return (s - s.mean()) / s.std()
 
 
 def loo_ranks(score_fn, liked_local, n_cand):
-    """score_fn(p, others) -> scores over candidates. -> 1-based rank of each held-out p."""
+    """score_fn(p, others) -> 候補に対する点。-> 抜いた p ごとの 1 始まりの順位。"""
     liked_local = np.asarray(liked_local)
     ranks = []
     for p in liked_local:
@@ -43,21 +44,21 @@ def summarise(ranks, n_rankable):
 
 
 def labels(merged):
-    """merged: {pool hash: signal Counter} -> {pool hash: 1 (liked) | 0 (unlabeled)} for interacted maps. The signals
-    carry no dates, so "played again on a later day" never counts here."""
+    """merged: {プールの hash: signal の Counter} -> 関わったマップの {プールの hash: 1（好意）| 0（ラベルなし）}。
+    signal に日付がないので、「後の日にまた遊んだ」はここでは数えない。"""
     from .playdata import INTERACTION
     return {h: int(likes.classify(s) == "liked") for h, s in merged.items() if any(s.get(k) for k in INTERACTION)}
 
 
 def run(index, cand_hashes, liked_hashes, kind="km3", csls=True, beta=0.0,
         difficulties=None, finished_points=None, csls_density="view", key_of=None, keep_ranks=False):
-    """Late fusion of per-view z-scores (weighted by the index weights) + beta * difficulty fit.
-    difficulties: {hash: (n_diff, 2) nps/njs}; finished_points: [(BeatSaver key of the played map, nps, njs)] of
-    finished plays (band source); key_of: {candidate hash: key}. The band for a held-out map excludes every play of
-    that key, whichever map version was played.
-    csls_density: "view" = hub density measured inside each view (matches the per-view score it corrects);
-    "combined" = one density from the weighted concatenation of all index views, applied to every view.
-    keep_ranks: also return "ranks", {held-out hash: rank} (personal data: results.py writes it only where asked)."""
+    """ビューごとの z スコアを後で合わせたもの（索引の重みで重み付け）+ beta * 難易度合わせ。
+    difficulties: {hash: (n_diff, 2) の nps/njs}。finished_points: 最後まで遊んだプレイの [(遊んだマップの BeatSaver
+    の key, nps, njs)]（幅の元）。key_of: {候補の hash: key}。抜いたマップの幅は、どの版を遊んだかによらず、その key の
+    プレイをすべて除いて作る。
+    csls_density: "view" = ハブの密度を各ビューの中で測る（直す対象のビューごとの点に合う）。"combined" = 索引の
+    すべてのビューを重み付きでつないだもので 1 つの密度を測り、すべてのビューにかける。
+    keep_ranks: "ranks"（{抜いた hash: 順位}）も返す（個人のデータ: results.py は頼まれたところにだけ書く）。"""
     cand = [index.pos[h] for h in cand_hashes]
     pos = {h: j for j, h in enumerate(cand_hashes)}
     liked = np.array([pos[h] for h in liked_hashes if h in pos])

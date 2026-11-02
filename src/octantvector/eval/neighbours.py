@@ -1,11 +1,10 @@
-"""Catalogue-only neighbour quality (no personal data): agreement of k-NN pairs on tags, artist, song, mapper,
-max NPS and BPM versus random pairs, plus hubness of the k-NN graph.
+"""カタログだけで測る近所の質（個人のデータは使わない）: k-NN の対が、タグ、アーティスト、曲、譜面の作者、
+最大 NPS、BPM でどれだけ一致するかを無作為の対と比べ、k-NN のグラフのハブの偏りも測る。
 
-The same agreement is also given per group of queries, so a weakness confined to some songs is not hidden by the
-mean: by upvotes (from the catalogue; for evaluation only, never a feature), and by isolation, the mean score of a
-query's k nearest maps in one reference view. An isolated song has few maps that sound like it, and "似た曲" from it
-is weaker (OctantSpecs open.md: マイナーな曲ほど似ていない). Groups are quantiles of the queries evaluated, so two runs
-over the same maps with the same reference view compare the same queries."""
+一部の曲にだけある弱さが平均に隠れないよう、同じ一致をクエリのグループごとにも出す: Upvote（カタログから。評価
+だけに使い、特徴にはしない）と、孤立の度合い（1 つの基準のビューでのクエリの k 近傍の平均の点）で分ける。孤立した
+曲は似た音のマップが少なく、そこからの「似た曲」は弱くなる。グループは評価したクエリの分位点なので、同じマップを
+同じ基準のビューで評価した 2 回は、同じクエリどうしを比べる。"""
 import re
 
 import numpy as np
@@ -21,8 +20,8 @@ def _norm(s):
 
 
 def pair_metrics(pairs, meta):
-    """pairs: [(hash_a, hash_b)]; meta: catalogue.load_meta output. Pairs with a map the catalogue no longer has (a
-    store keeps the vectors of deleted versions) are left out."""
+    """pairs: [(hash_a, hash_b)]。meta: catalogue.load_meta の出力。カタログにもうないマップを含む対（ストアは削除された
+    版のベクトルも持つ）は外す。"""
     pairs = [(x, y) for x, y in pairs if x in meta and y in meta]
     a = [meta[x] for x, _ in pairs]; b = [meta[y] for _, y in pairs]
     ga = [set(m["tags"]) & GENRE_TAGS for m in a]; gb = [set(m["tags"]) & GENRE_TAGS for m in b]
@@ -38,7 +37,7 @@ def pair_metrics(pairs, meta):
 
 
 def hubness(idx, n):
-    """idx: (n, k) neighbour indices. k-occurrence skew, max, share never retrieved, share taken by the top 1%."""
+    """idx: (n, k) の近傍の添字。k-occurrence の歪度、最大、一度も引かれない割合、上位 1% が占める割合。"""
     nk = np.bincount(np.asarray(idx).ravel(), minlength=n).astype(float)
     top = np.sort(nk)[::-1]
     return {"nk_skew": float(((nk - nk.mean()) ** 3).mean() / (nk.std() ** 3 + 1e-12)), "nk_max": int(top[0]),
@@ -47,13 +46,13 @@ def hubness(idx, n):
 
 
 def isolation(index, k=10):
-    """{hash: mean score of its k nearest maps} in `index` (one reference view): low = isolated."""
+    """`index`（1 つの基準のビュー）での {hash: k 近傍の平均の点}。低いほど孤立。"""
     _, sc = index.knn(k)
     return dict(zip(index.hashes, sc.mean(1).tolist()))
 
 
 def _quantile_groups(values, n):
-    """Group number 0..n-1 of each value (NaN: -1) by quantiles of the finite values; ties go to the lower group."""
+    """各値のグループ番号 0..n-1（NaN は -1）。有限の値の分位点で分け、同じ値は下のグループに入れる。"""
     v = np.asarray(values, np.float64)
     ok = np.isfinite(v)
     out = np.full(len(v), -1)
@@ -76,9 +75,9 @@ def _by_group(groups, n, idx, sc, hs, meta, low, high):
 
 
 def evaluate(index, meta, k=10, csls=False, n_random=40000, seed=0, rows=None, isolation_of=None, groups=4):
-    """rows: optional list that receives one {"query", "results": [[hash, score], ...]} per item (results.py).
-    isolation_of: {hash: isolation} (isolation() over a reference view) to also break the agreement down by it;
-    queries missing there are left out of that breakdown."""
+    """rows: 渡せば、項目ごとに {"query", "results": [[hash, score], ...]} を 1 つ受け取る list（results.py）。
+    isolation_of: {hash: 孤立の度合い}（基準のビューでの isolation()）。渡せば一致をそれでも分ける。そこにない
+    クエリはその内訳から外す。"""
     idx, sc = index.knn(k, csls=csls)
     hs = index.hashes
     if rows is not None:

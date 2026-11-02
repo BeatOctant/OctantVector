@@ -1,28 +1,24 @@
-"""The next distributable DB version from the working store, as a full or as a diff from the previous version
-(OctantSpecs contracts/, contract 2 (DB build to recommendation core) and contract 5 (OctantHarvest to OctantCompass);
-octantvector/design.md, 配布物). Called by the contract 1 (OctantHarvest to OctantVector) `release` (api.py) and by the
-development command `octantvector release`.
+"""作業用ストアからの、次の配布 DB の版。全量か、前の版からの差分として作る（契約2（DB build to recommendation core）
+と契約5（OctantHarvest to OctantCompass））。
 
-Rows are the current versions of the distribution pool in the ledger; old versions get only a row in
-superseded.parquet that points to the current version of the same map. Each view holds the rows it has (a map whose
-audio failed simply has no row in that view), normalised with the calibration (normalisation.py) and stored as
-float16. A view computed from the charts has one row per chart ("charts" rows); a chart view stored per map is
-refused, because the DB must not merge what each chart is into its map (OctantSpecs constitution.md, principle 2).
+行は台帳にある配布プールの現行版。旧い版は superseded.parquet に、同じマップの現行版を指す行だけを持つ。各ビューは
+自分が持つ行を持ち（音声に失敗したマップは、そのビューに行がないだけ）、較正で正規化し（normalisation.py）、
+エンコーダーの次元のまま float16 で、または較正にあるそのビューの export のとおりに（次元を減らす、int8:
+export.py）持つ。譜面から計算したビューは譜面ごとに 1 行（"charts" の行）。マップごとに持つ譜面のビューは断る:
+DB は各譜面のことをマップにまとめてはならないため（OctantSpecs constitution.md、原則 2）。
 
-Everything goes to the folder `out` the caller names; approving and uploading are the caller's (OctantHarvest's):
-  <dbVersion>/       the complete DB of that version (always written; the base of the next diff)
-  <dbVersion>.diff/  the diff from the previous version `base`, when one is possible
-A diff is made when every view the previous version also has keeps its fingerprint and calibration statistics,
-the normalisation version is the same, the previous version holds nothing this OctantVector does not know (a diff would
-lose it: dbformat.py), and fewer than `full_every` diffs were made since the last full; otherwise only the full is
-published. A diff may add a view (a view pack: a view newly named), replace one (the encoder's version went
-up) or remove one (no longer named); the calibration is then the previous one extended with the new views
-(calibration.extend). The files' formats are in dbformat.py.
+すべて、呼ぶ側が名指すフォルダ `out` に書く。承認とアップロードは呼ぶ側の仕事:
+  <dbVersion>/       その版の完全な DB（いつも書く。次の差分の元）
+  <dbVersion>.diff/  前の版 `base` からの差分。作れるとき
+差分を作るのは、前の版にもあるどのビューも fingerprint と較正の統計を保ち、正規化の版が同じで、前の版がこの
+OctantVector の知らないものを持たず（差分ではそれを失う: dbformat.py）、最後の全量から作った差分が `full_every`
+より少ないとき。そうでなければ全量だけを出す。差分はビューを足し（ビューのパック: 新しく名指したビュー）、置き換え
+（エンコーダーの版が上がった）、外せる（もう名指さない）。そのときの較正は、前の較正を新しいビューで広げたもの
+（calibration.extend）。ファイルの形式は dbformat.py。
 
-Pass and Tech of charts.parquet are the stored values of the swing simulation (`swing_flow`, METRICS), whether or not
-`swing_flow` is one of the views; contract 1's `compute` computes it for that reason. A chart without a stored value
-(another play style, too few or too many notes, a zip that failed) keeps them empty, and manifest.chartMetrics names
-the view that filled each column. The version is signed afterwards, when it is approved (api.sign).
+charts.parquet の Pass と Tech は、`swing_flow` がビューの 1 つかによらず、スイングのシミュレーション（`swing_flow`、
+METRICS）の保存した値。値の保存されていない譜面（別のプレイスタイル、ノーツが少なすぎるか多すぎる、zip に失敗した）
+は空のままにし、manifest.chartMetrics に各列を埋めたビューを書く。版には、承認されたときに後から署名する（api.sign）。
 """
 import json
 import sys
@@ -31,7 +27,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import artists as artist_files, calibration as calibrations, catalogue, mappers
+from . import artists as artist_files, calibration as calibrations, catalogue, export, mappers
 from ..common import charts, dbformat
 from .encoders import get
 from .errors import GenerationError
@@ -40,35 +36,34 @@ from .normalisation import calibrated, normalise
 from .store import Store
 
 
-# charts.parquet's metric columns and the view whose stored (not normalised) feature of the same name fills each
+# charts.parquet の指標の列と、各列を同じ名前の保存した（正規化しない）特徴で埋めるビュー
 METRICS = {"pass": "swing_flow", "tech": "swing_flow"}
 
 
 def metric_views():
-    """The views a release reads the chart metrics from (compute computes them whatever the caller names)."""
+    """リリースが譜面の指標を読むビュー（compute は、呼ぶ側が何を名指してもこれを計算する）。"""
     return sorted(set(METRICS.values()))
 
 
 def build(cfg, view_ids, calibration, log=sys.stderr, relations=()):
-    """Content of a DB (dbformat.py) from the ledger, the catalogue and the store. relations: the relation views built
-    from the catalogue to put in it (mappers.NAME)."""
+    """台帳、カタログ、ストアからの DB の中身（dbformat.py）。relations: カタログから作って入れる関係のビュー（mappers.NAME）。"""
     encs = {i: get(i) for i in view_ids}
     for i, e in encs.items():
         if e.role_name() == "chart" and e.row_kind() != "charts":
             raise GenerationError(f"{i} describes charts but stores one vector per map; only views with chart rows "
                                   "can go into the DB (OctantSpecs constitution.md, principle 2)")
-    sts = {i: calibrated(calibration, e) for i, e in encs.items()}  # same normalisation and definition, or stop
+    sts = {i: calibrated(calibration, e) for i, e in encs.items()}  # 正規化と定義が同じであること。違えば止める
     with Ledger.of(cfg.store) as led:
         hashes = sorted(led.pool_hashes("distribution"))
         old = led.old_versions()
     if not hashes:
         raise GenerationError("the distribution pool is empty; run `octantvector update` first")
     recs = catalogue.records_for(cfg.require("catalogue"), hashes)
-    hashes = [h for h in hashes if h in recs]  # in the ledger but no longer in this catalogue snapshot: left out
+    hashes = [h for h in hashes if h in recs]  # 台帳にあるが、このカタログのスナップショットにはもうない: 外す
     c = dbformat.empty()
     for h in hashes:
         m, v = recs[h]
-        md = m.get("metadata", {})  # no song titles: they are never features
+        md = m.get("metadata", {})  # 曲名は入れない: 特徴にしないため
         c["maps"][h] = (md.get("songAuthorName"), md.get("levelAuthorName"), _num(md.get("duration")),
                         v.get("createdAt") or m.get("uploaded"))
         c["charts"][h] = [(d.get("characteristic"), d.get("difficulty"), _num(d.get("nps")),
@@ -83,18 +78,24 @@ def build(cfg, view_ids, calibration, log=sys.stderr, relations=()):
         key = f"{e.id}@{e.version}"
         hs, X = Store(e, cfg.store).load()
         keep = [n for n, h in enumerate(hs) if charts.key_hash(h) in want]
-        x = normalise(e, X[keep], sts[i]).astype(np.float16) if keep else np.zeros((0, e.dim), np.float16)
-        meta = {"role": e.role_name(), "rows": e.row_kind(), "dim": int(x.shape[1]), "dtype": "float16",
+        ex = sts[i].get("export")  # ビューをどう書くか（export.py）。None: エンコーダーが作ったまま、float16
+        dim, dtype = (ex["dim"], ex["dtype"]) if ex else (e.dim, "float16")
+        x = export.apply(normalise(e, X[keep], sts[i]), ex, cfg.store) if keep else np.zeros((0, dim), dtype)
+        meta = {"role": e.role_name(), "rows": e.row_kind(), "dim": int(x.shape[1]), "dtype": dtype,
                 "norm": e.norm, "fingerprint": e.fingerprint(),
                 "sources": [f"{get(s).id}@{get(s).version}" for s in e.sources()]}
+        if dim != e.dim:
+            meta["encoderDim"] = e.dim
+        if dtype == "int8":  # 値にその次元の尺度を掛けたものがベクトル（契約2）
+            meta["scale"] = list(ex["scale"])
         if e.all_credits():
             meta["credits"] = e.all_credits()
-        if meta["role"] == "genre":  # one word per dimension: the words the request's `genre` can name (contract 2)
+        if meta["role"] == "genre":  # 1 次元に 1 語: 要求の `genre` が名指せる語（契約2）
             meta["genres"] = list(getattr(e, "names", ()))
         c["views"][key] = {"meta": meta,
                            "vecs": {charts.catalogue_spelling(hs[n]): x[j] for j, n in enumerate(keep)}}
         print(f"{key}: {len(keep)} of {len(hashes)} rows", file=log)
-        if e.row_kind() == "charts":  # a chart the catalogue does not list has no row in charts.parquet
+        if e.row_kind() == "charts":  # カタログにない譜面は charts.parquet に行を持たない
             unlisted = sorted(k for k in c["views"][key]["vecs"] if k not in chart_keys)
             if unlisted:
                 print(f"{key}: {len(unlisted)} charts left out, their difficulty is not in the catalogue: "
@@ -115,9 +116,9 @@ def build(cfg, view_ids, calibration, log=sys.stderr, relations=()):
 
 
 def _metrics(cfg, rows, log):
-    """Fill the METRICS columns of the chart rows {hash: [row]} in place from the stored views.
-    -> manifest.chartMetrics: {column: id@version of the view that filled it}."""
-    cols = {"pass": 4, "tech": 5}  # positions in a chart row (dbformat.py)
+    """譜面の行 {hash: [row]} の METRICS の列を、保存したビューからその場で埋める。
+    -> manifest.chartMetrics: {列: それを埋めたビューの id@version}。"""
+    cols = {"pass": 4, "tech": 5}  # 譜面の行の中の位置（dbformat.py）
     filled = {}
     for i in metric_views():
         e = get(i)
@@ -147,7 +148,7 @@ def _metrics(cfg, rows, log):
 
 
 def latest(root):
-    """Manifest and folder of the newest complete full version under `root` (None if there is none)."""
+    """`root` の下の一番新しい完全な全量の版のマニフェストとフォルダ（なければ None）。"""
     best = None
     for p in Path(root).glob("*/manifest.json"):
         if p.parent.name.endswith(".partial"):
@@ -159,15 +160,16 @@ def latest(root):
 
 
 def release(cfg, view_ids, calibration=None, full=False, built_at=None, log=sys.stderr, out=None, base=...,
-            presets=None, notice=None, relations=()):
-    """Next version of the views `view_ids` and of the relation views `relations` built from the catalogue
-    (mappers.NAME), written under `out` (default <store>/releases). base: folder of the
-    previous full version, None when there is none (default: the newest full under `out`). calibration: default
-    the base's, extended over the distribution pool with the views it lacks (saved under <store>/calibration).
-    presets: the hands (a list, or the path of a JSON file holding one) to write into the manifest; None keeps the
-    base's. Every hand, kept ones too, must be one the runtime can serve on this DB, or the release stops (OctantSpecs
-    plans/presets.md §8). notice: the DB's terms and credits (Markdown text) for the manifest; None keeps the base's.
-    -> (full folder, diff folder or None)."""
+            presets=None, notice=None, relations=(), export=None):
+    """ビュー `view_ids` と、カタログから作る関係のビュー `relations`（mappers.NAME）の次の版。`out`（既定
+    <store>/releases）の下に書く。base: 前の全量の版のフォルダ。なければ None（既定: `out` の下の一番新しい全量）。
+    calibration: 既定は base のものを、配布プールで足りないビューの分だけ広げたもの（<store>/calibration に保存）。
+    presets: マニフェストに書く手札（list か、それを持つ JSON のファイルのパス）。None なら base のものを残す。残す
+    ものも含めてどの手札も、推薦側がこの DB で出せるものであること。でなければリリースを止める。
+    notice: マニフェストに書く DB の条件とクレジット（Markdown の文）。None なら base のものを残す。
+    export: 各ビューをどう書くか（{view id: {"dim", "dtype"}}、export.py。名指さないビューはエンコーダーが作ったまま
+    書く）。None なら較正にあるものを残す。変えると新しい較正になり（<store>/calibration に保存）、その版は全量になる。
+    -> (全量のフォルダ, 差分のフォルダか None)。"""
     root = Path(out) if out is not None else Path(cfg.store) / "releases"
     if base is ...:
         prev = latest(root)
@@ -190,12 +192,20 @@ def release(cfg, view_ids, calibration=None, full=False, built_at=None, log=sys.
             print(f"calibration {extended['id']} = {calibration['id']} + new views; wrote "
                   f"{calibrations.save(extended, cfg.store)}", file=log)
             calibration = extended
+    if export is not None:
+        with Ledger.of(cfg.store) as led:
+            pool = led.pool_hashes("distribution")
+        made = calibrations.with_export(calibration, cfg.store, view_ids, export, pool, "distribution")
+        if made is not calibration:
+            print(f"calibration {made['id']} = {calibration['id']} with the export "
+                  f"{json.dumps(export, sort_keys=True)}; wrote {calibrations.save(made, cfg.store)}", file=log)
+            calibration = made
     content = build(cfg, view_ids, calibration, log, relations)
     artist = any(r["meta"].get("role") == "artist" for r in content["relations"].values())
-    if not artist and prev is not None:  # no artist files given: the previous version's artist view
+    if not artist and prev is not None:  # アーティストのファイルを渡されなかった: 前の版のアーティストのビュー
         for key, r in dbformat.read_relations(prev[1], prev[0]).items():
             if str(r["meta"].get("source", "")).startswith("listenbrainz:"):
-                r["meta"]["credits"] = list(artist_files.CREDITS)  # with today's credits
+                r["meta"]["credits"] = list(artist_files.CREDITS)  # 今日のクレジットで
                 content["relations"][key] = r
     if presets is None and prev is not None:
         presets = prev[0].get("presets")
@@ -216,7 +226,7 @@ def release(cfg, view_ids, calibration=None, full=False, built_at=None, log=sys.
 
     base = dbformat.read_content(prev[1]) if prev and not full else None
     why = "--full" if full else "first release" if prev is None else dbformat.diffable(prev[0], base["calibration"], content)
-    if why is None and dbformat.unknown(base):  # what this OctantVector cannot write again would be lost by a diff
+    if why is None and dbformat.unknown(base):  # この OctantVector が書き直せないものは、差分では失われる
         why = f"the previous version holds what this OctantVector does not know: {'; '.join(dbformat.unknown(base))}"
     if why is None and prev[0].get("diffsSinceFull", 0) + 1 > cfg.full_every:
         why = f"{cfg.full_every} diffs since the last full (setting full_every)"
@@ -237,7 +247,7 @@ def release(cfg, view_ids, calibration=None, full=False, built_at=None, log=sys.
 
 
 def _hands(presets, content):
-    """The hands checked against the content: what the runtime would leave out stops the release here instead."""
+    """中身と照らした手札: 推薦側が外すものは、ここでリリースを止める。"""
     from ..common.hands import check_hands
     hands = json.loads(Path(presets).read_text()) if isinstance(presets, (str, Path)) else presets
     if not isinstance(hands, list):

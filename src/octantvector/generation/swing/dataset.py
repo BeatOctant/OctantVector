@@ -1,15 +1,16 @@
-"""Training/evaluation rows: one per Standard difficulty of every pool map, with swing features and the labels the
-catalogue already has (BeatSaver style tags, ScoreSaber/BeatLeader stars for ranked charts, BeatSaver's own parity
-summary). The rows are derived from public maps only; where they are written is up to the caller.
+"""学習と評価の行: プールのマップの Standard の難易度ごとに 1 行。スイングの特徴と、カタログにもうあるラベル
+（BeatSaver のスタイルタグ、ランク譜面の ScoreSaber/BeatLeader の星、BeatSaver 自身のパリティの要約）を持つ。
+行は公開されたマップだけから作る。どこに書くかは呼ぶ側が決める。
 
-`train` fits the style model (style.py); `evaluate` reports how well the simulation tracks those labels (OctantSpecs octantvector/swing.md, "評価"):
-  difficulty  Spearman of pass/tech/NPS with stars, cross-validated ridge on all features (grouped by mapper)
-  order       share of maps whose pass rating rises from easier to harder difficulty
-  style       AUC of a cross-validated logistic model per BeatSaver style tag, against an NPS/NJS baseline
-  fine_tags   share of maps with each fine tag, its lift on the BeatSaver style tags, and the AUC of its score
-              against description/label keywords (KEYWORDS)
-  keyword_features  the single features that best separate maps carrying each keyword
-  parity      Spearman of simulated resets (bomb / other) with BeatSaver's parity summary (resets / errors / warns)
+`train` はスタイルのモデルを合わせ（style.py）、`evaluate` はシミュレーションがそのラベルにどれだけ沿うかを出す
+（OctantSpecs octantvector/swing.md、「評価」）:
+  difficulty  pass/tech/NPS と星の Spearman。すべての特徴での交差検証したリッジ（譜面の作者でまとめる）
+  order       易しい難易度から難しい難易度へ pass の評価が上がるマップの割合
+  style       BeatSaver のスタイルタグごとの、交差検証したロジスティックのモデルの AUC。NPS/NJS の基準と比べる
+  fine_tags   細かいタグごとの、付くマップの割合、BeatSaver のスタイルタグへの持ち上げ（lift）、説明と
+              ラベルの語（KEYWORDS）に対する点の AUC
+  keyword_features  各語の付いたマップを一番よく分ける、単独の特徴
+  parity      シミュレーションのリセット（爆弾 / ほか）と BeatSaver のパリティの要約（resets / errors / warns）の Spearman
 """
 import gzip
 import re
@@ -29,14 +30,14 @@ from . import params, style
 from .features import NAMES, chart_features
 
 STYLE_TAGS = style.LEARNED_TAGS
-MOD_FLAGS = ("ne", "me", "vivify")  # per-difficulty catalogue flags that make a chart "modded"
-# Weak labels for checking fine tags only: words in the map description or difficulty label (never features;
-# "no resets" style negations make them noisy, so agreement is a lower bound)
+MOD_FLAGS = ("ne", "me", "vivify")  # 譜面を "modded" にする、難易度ごとのカタログの印
+# 細かいタグを確かめるためだけの弱いラベル: マップの説明か難易度のラベルにある語（特徴にはしない。「リセットなし」
+# のような否定でぶれるので、一致は下限）
 KEYWORDS = {
     "angle_tech": r"\btech", "acc": r"\bacc(uracy)?\b", "stream": r"\bstreams?\b", "jumps": r"\bjumps?\b",
     "speed": r"\bspeed\b", "vibro": r"\bvibro", "sliders": r"\bsliders?\b", "chains": r"\bchains?\b",
     "arcs": r"\barcs?\b", "bombs": r"\bbombs?\b", "bomb_resets": r"\bbomb ?resets?\b",
-    "resets": r"\bresets?\b",  # usually meant as intended (bomb) resets: checked against features only, no tag
+    "resets": r"\bresets?\b",  # たいてい意図した（爆弾の）リセットの意味: 特徴と照らすだけで、タグにはしない
     "wrist_roll": r"\bwrist|\brolls?\b", "dodge_walls": r"\bwalls?\b", "flowy": r"\bflow(y|ing)?\b",
     "crossover": r"\bcross ?overs?\b", "triplets": r"\btriplets?\b", "inverted": r"\binvert|\bupside", "dots": r"\bdots?\b",
     "windows": r"\bwindows?\b", "stamina": r"\bstamina\b|\bendurance\b",
@@ -81,8 +82,8 @@ def _diff_labels(lab, d, description):
 
 
 def _pool(cat, available, min_upvotes, n, seed):
-    """Published versions in `available` (hash -> commit_seq) with a Standard chart and >= min_upvotes, optionally a
-    random subset of n, in commit_seq order as [{key, hash, seq}]."""
+    """`available`（hash -> commit_seq）にある公開された版のうち、Standard の譜面があり Upvote が min_upvotes 以上のもの。
+    必要なら n 個の無作為な部分。commit_seq の順に [{key, hash, seq}]。"""
     d = {"min_upvotes": min_upvotes, "standard": True}
     out = []
     for m in catalogue.read_jsonl(cat):
@@ -137,14 +138,14 @@ def load(path):
     return rows
 
 
-# ---------------------------------------------------------------- statistics (numpy only)
+# ---------------------------------------------------------------- 統計（numpy だけ）
 def rank(a):
     a = np.asarray(a, float)
     o = np.argsort(a, kind="mergesort")
     r = np.empty(len(a)); r[o] = np.arange(len(a))
     s = a[o]
     i = 0
-    while i < len(s):  # average ties
+    while i < len(s):  # 同じ値は平均の順位
         j = i
         while j + 1 < len(s) and s[j + 1] == s[i]:
             j += 1
@@ -183,7 +184,7 @@ def ridge(Xtr, ytr, Xte, lam):
 
 
 def logistic_weights(A, y, lam, iters=50):
-    """L2-regularised logistic regression by Newton steps on standardised A; -> weights with the bias last."""
+    """標準化した A での、ニュートン法による L2 正則化のロジスティック回帰。-> 重み（バイアスは最後）。"""
     A = np.c_[A, np.ones(len(A))]
     w = np.zeros(A.shape[1])
     reg = lam * np.eye(A.shape[1]); reg[-1, -1] = 0
@@ -205,7 +206,7 @@ def logistic(Xtr, ytr, Xte, lam):
 
 
 def group_folds(groups, k, seed=0):
-    """Fold id per row such that a group (mapper) never spans folds."""
+    """グループ（譜面の作者）が分割をまたがないような、行ごとの分割の番号。"""
     u = sorted(set(map(str, groups)))
     rng = np.random.default_rng(seed)
     fold_of = dict(zip(u, rng.permutation(len(u)) % k))
@@ -220,9 +221,9 @@ def cv_predict(fit, X, y, folds, **kw):
     return out
 
 
-# ---------------------------------------------------------------- training and evaluation
+# ---------------------------------------------------------------- 学習と評価
 def hardest_rows(rows):
-    """Index of each map's hardest Standard difficulty (where BeatSaver's map-level tags apply)."""
+    """各マップの一番難しい Standard の難易度の添字（BeatSaver のマップ単位のタグが当たるところ）。"""
     hardest = {}
     for i, r in enumerate(rows):
         d = difficulty_rank(r["diff"])
@@ -232,7 +233,7 @@ def hardest_rows(rows):
 
 
 def train(rows, lam=10.0):
-    """Style model (quantiles over every row + learned tag weights on each map's hardest difficulty)."""
+    """スタイルのモデル（すべての行での分位点と、各マップの一番難しい難易度で学習したタグの重み）。"""
     X = np.array([r["f"] for r in rows], float)
     idx = np.array([i for i in hardest_rows(rows) if not rows[i].get("auto")], int)
     return style.fit(X, X[idx], [rows[i]["tags"] for i in idx], lam)
@@ -243,7 +244,7 @@ def evaluate(rows, k=5, lam=10.0, seed=0):
     col = {n: i for i, n in enumerate(NAMES)}
     res = {"rows": len(rows), "maps": len({r["hash"] for r in rows})}
 
-    # difficulty vs stars (ranked charts only)
+    # 難易度と星（ランク譜面だけ）
     diff = {}
     for star in ("stars", "bl_stars"):
         m = np.array([r[star] > 0 for r in rows])
@@ -262,7 +263,7 @@ def evaluate(rows, k=5, lam=10.0, seed=0):
                               "ridge_nps_njs_cv": float(np.abs(base - y).mean())}}
     res["difficulty"] = diff
 
-    # ordering of difficulties within a map
+    # マップの中での難易度の並び
     by_map = {}
     for r, x in zip(rows, X):
         by_map.setdefault(r["hash"], []).append((difficulty_rank(r["diff"]), x))
@@ -274,7 +275,7 @@ def evaluate(rows, k=5, lam=10.0, seed=0):
                 ok[name].append(b[1][col[name]] > a[1][col[name]])
     res["order"] = {f"{n}_rises_pct": 100 * float(np.mean(v)) for n, v in ok.items() if v}
 
-    # learned style tags (hardest difficulty per map, automapped/AI maps left out), cross-validated by mapper
+    # 学習するスタイルタグ（マップごとに一番難しい難易度。自動や AI で作ったマップは外す）。譜面の作者で交差検証する
     idx = np.array([i for i in hardest_rows(rows) if not rows[i].get("auto")], int)
     Xh = X[idx]
     folds = group_folds([rows[i]["mapper"] for i in idx], k, seed)
@@ -288,8 +289,8 @@ def evaluate(rows, k=5, lam=10.0, seed=0):
         learned[tag] = {"n_pos": int(y.sum()), "auc_logistic_cv": auc(p_all, y), "auc_nps_njs_cv": auc(p_base, y)}
     res["style"] = learned
 
-    # fine tags: share of maps, and how much each raises the odds of each BeatSaver style tag (lift)
-    model = style.fit(X, Xh, [[]] * len(idx), lam)  # quantiles only
+    # 細かいタグ: マップの割合と、各タグが BeatSaver のスタイルタグごとの見込みをどれだけ上げるか（lift）
+    model = style.fit(X, Xh, [[]] * len(idx), lam)  # 分位点だけ
     rules = style.load_rules()
     S, on = style.fine_tags(model, Xh, rules)
     T = {t: np.array([t in rows[i]["tags"] for i in idx]) for t in STYLE_TAGS}
@@ -304,7 +305,7 @@ def evaluate(rows, k=5, lam=10.0, seed=0):
             fine[name]["keyword"] = {"n": int(kw.sum()), "auc_score": round(auc(S[:, j], kw), 3)}
     res["fine_tags"] = fine
 
-    # which single features (either direction) best separate maps carrying each keyword: guides the fine-tag rules
+    # 各語の付いたマップを一番よく分ける単独の特徴（どちらの向きでも）: 細かいタグの決まりの手がかり
     kwf = {}
     Lh = style.signed_log(Xh)
     for name in KEYWORDS:
@@ -315,8 +316,8 @@ def evaluate(rows, k=5, lam=10.0, seed=0):
             kwf[name] = {"n": int(kw.sum()), "top": {NAMES[j]: round(float(a[j]), 3) for j in top}}
     res["keyword_features"] = kwf
 
-    # simulated resets vs BeatSaver's parity summary, by kind: BeatSaver's checker (the bs-parity lineage) counts
-    # bomb-forced parity flips as resets and same-parity hits without bombs as errors (borderline ones as warns)
+    # シミュレーションのリセットと BeatSaver のパリティの要約を、種類ごとに: BeatSaver の確認（bs-parity の系統）は、
+    # 爆弾で強いられたパリティの切り替えをリセット、爆弾なしの同じパリティの打ちをエラー（際どいものは警告）と数える
     m = [i for i, r in enumerate(rows) if r.get("bs_resets") is not None and r["swings"]]
     if len(m) > 30:
         sim = {k: [X[i, col[f"{k}_frac"]] * rows[i]["swings"] for i in m] for k in ("reset", "bomb_reset", "rebound_reset")}

@@ -186,6 +186,14 @@ def test_calibrate_release_drift_and_index(harvest, monkeypatch):
     full, diff = idx["entries"]
     assert (full["kind"], diff["kind"], diff["baseDbVersion"]) == ("full", "diff", "2026.10.02")
     assert len(full["parts"]) > 1 and full["parts"][0]["url"] == "https://example.org/db/2026.10.02.full.tar.part000"
+    idx = json.loads(gen.build_index([first["published"], second["published"]], pub, {  # one place per version
+        "part_size_mb": 0.01, "publish_url": "https://github.com/o/r/releases/download/{dbVersion}/"}).read_text())
+    assert [e["parts"][0]["url"] for e in idx["entries"]] == [
+        "https://github.com/o/r/releases/download/2026.10.02/2026.10.02.full.tar.part000",
+        "https://github.com/o/r/releases/download/2026.10.03/2026.10.03.diff.tar.part000"]
+    with pytest.raises(GenerationError, match="only placeholder"):
+        gen.build_index([first["published"]], tmp_path / "pub4", {"part_size_mb": 0.01, "publish_url": "https://x/{tag}"})
+    assert not (tmp_path / "pub4").exists()
     with pytest.raises(GenerationError, match="nothing to index"):
         gen.build_index([second["published"]], tmp_path / "pub2", {"part_size_mb": 0.01})
     with pytest.raises(GenerationError, match="part_size_mb is required"):  # the caller's setting, no default here

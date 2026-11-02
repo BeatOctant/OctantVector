@@ -1,4 +1,4 @@
-"""Read-only access to the local map archive: maps/<hash[:2]>/<hash>.zip plus download.journal.jsonl."""
+"""手元のマップのアーカイブを読むだけの入口: maps/<hash[:2]>/<hash>.zip と download.journal.jsonl。"""
 import io
 import json
 import zipfile
@@ -10,14 +10,14 @@ def zip_path(archive: Path, version_hash: str) -> Path:
 
 
 def commit_order(archive: Path) -> dict[str, int]:
-    """version hash -> commit_seq for every verified zip (sequential on-disk order; read zips in this order)."""
+    """確かめたすべての zip の 版の hash -> commit_seq（ディスク上の順。zip はこの順で読む）。"""
     seq = {}
     with open(Path(archive) / "download.journal.jsonl") as f:
         for line in f:
-            if '"committed"' in line:  # skips most other events without parsing them; the event is checked below
+            if '"committed"' in line:  # ほかの出来事の多くは解析せずに飛ばす。出来事の種類は下で確かめる
                 try:
                     j = json.loads(line)
-                except ValueError:  # a line cut short by an interrupted write; its zip is not committed
+                except ValueError:  # 書き込みが途中で切れた行。その zip は確定していない
                     continue
                 if j.get("event") == "committed":
                     seq[j["hash"]] = j["commit_seq"]
@@ -25,14 +25,14 @@ def commit_order(archive: Path) -> dict[str, int]:
 
 
 def read_json(zf: zipfile.ZipFile, name: str):
-    """Map .dat files are JSON, usually UTF-8 (with or without BOM), occasionally UTF-16. json.loads tells the
-    encoding from the BOM or, without one, from the first bytes (RFC 8259 / 4627)."""
+    """マップの .dat は JSON で、たいてい UTF-8（BOM はあってもなくても）、まれに UTF-16。json.loads は BOM から、
+    BOM がなければ先頭のバイトから文字コードを見分ける（RFC 8259 / 4627）。"""
     return json.loads(zf.read(name))
 
 
 class MapZip:
-    """Context manager over one map zip, opened read-only. `data` is the zip's bytes when the caller has already
-    read them, so the file is not read from disk a second time."""
+    """1 つのマップの zip を読み取り専用で開くコンテキストマネージャー。`data` は呼ぶ側がもう読んだ zip のバイト列で、
+    ファイルをディスクから二度読まずに済む。"""
 
     def __init__(self, archive: Path, version_hash: str, data: bytes | None = None):
         self.path = zip_path(archive, version_hash)
@@ -41,7 +41,7 @@ class MapZip:
 
     def __enter__(self):
         self.zf = zipfile.ZipFile(self.path if self.data is None else io.BytesIO(self.data))
-        self.names = {n.lower(): n for n in self.zf.namelist()}  # Info.dat vs info.dat etc.
+        self.names = {n.lower(): n for n in self.zf.namelist()}  # Info.dat と info.dat など
         self.info = read_json(self.zf, self.names["info.dat"])
         return self
 
@@ -55,8 +55,8 @@ class MapZip:
         return self.zf.read(name)
 
     def cover_bytes(self) -> bytes | None:
-        """The cover image named in Info.dat (`_coverImageFilename`, v4 `coverImageFilename`), matched to the zip's
-        names without case; else the first .jpg, .jpeg or .png in the zip; None when there is none."""
+        """Info.dat にあるカバー画像（`_coverImageFilename`、v4 は `coverImageFilename`）。zip の中の名前とは大文字小文字を
+        区別せずに照らす。なければ zip の最初の .jpg、.jpeg、.png。それもなければ None。"""
         fn = self.info.get("_coverImageFilename") or self.info.get("coverImageFilename")
         name = self.names.get(fn.lower()) if isinstance(fn, str) and fn else None
         if name is None:
@@ -67,14 +67,14 @@ class MapZip:
         return read_json(self.zf, self.names[filename.lower()])
 
 
-# longest song decoded: a whole song is decoded into memory as float32, and libsndfile crashes the process on very
-# long ones (a 9-hour song, map 5149c); BeatSaber songs over half an hour are joke or test maps
+# デコードする曲の最大の長さ: 曲全体を float32 でメモリに展開するので、とても長い曲で libsndfile がプロセスごと
+# 落ちる（9 時間の曲、マップ 5149c）。30 分を超える Beat Saber の曲は冗談かテストのマップ
 MAX_SONG_S = 1800
 
 
 def decode_audio(data: bytes, max_s: float = MAX_SONG_S):
-    """-> (mono float32 samples, sample rate). libsndfile first, ffmpeg (via librosa) as fallback. A song whose
-    header says it is longer than max_s seconds raises ValueError before anything is decoded."""
+    """-> (モノラルの float32 のサンプル, サンプルレート)。まず libsndfile、だめなら ffmpeg（librosa 経由）。
+    ヘッダーで max_s 秒より長い曲は、何もデコードする前に ValueError を投げる。"""
     import soundfile as sf
     try:
         f = sf.SoundFile(io.BytesIO(data))

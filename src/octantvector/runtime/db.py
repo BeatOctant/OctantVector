@@ -1,19 +1,21 @@
-"""Reading side of the distributed DB (OctantSpecs contracts/: contract 1 (OctantCompass to OctantVector) `open_db`, contract 2 (DB build to recommendation core) format; `search` is
-this runtime's own, not in the contract).
+"""配布 DB を読む側（OctantSpecs contracts/: 契約1（OctantCompass to OctantVector）の `open_db`、契約2（DB build to
+recommendation core）の形式。`search` はこの推薦側のもので、契約にはない）。
 
-open_db checks the manifest before anything is used: the schemaVersion major must be one this code reads, it must be
-a full DB (a diff is applied first with apply_diff), and every file must match its SHA-256 in the manifest. Unknown manifest keys, and views whose rows are not ones this version
-knows, are ignored (a newer minor version). The signature is not checked here: apply_update checks it on what comes
-from outside, and a full made by applying a diff has none (OctantSpecs contracts/, 契約5（OctantHarvest to OctantCompass）署名). The vectors are already normalised with the DB's calibration, so a search is a dot product; the index is
-built here on first open and is never distributed.
+open_db は、何かを使う前にマニフェストを確かめる: schemaVersion のメジャーがこのコードの読めるものであること、
+全量の DB であること（差分は先に apply_diff で当てる）、どのファイルもマニフェストの SHA-256 と合うこと。知らない
+マニフェストのキーと、この版の知らない行のビューは無視する（新しいマイナー版）。署名はここでは確かめない:
+apply_update が外から来るものを確かめ、差分を当てて作った全量は署名を持たない（OctantSpecs contracts/、
+契約5（OctantHarvest to OctantCompass）署名）。ベクトルはもう DB の較正で正規化してあるので、検索は内積になる。
+索引は初めて開いたときにここで作り、配らない。float16 のビューは float32 で持ち、int8 のビューは int8 のまま
+（Int8Vectors）で float32 の 4 分の 1。
 
-Views have map rows (one vector per map version: the song, the metadata) or chart rows (one vector per chart). A
-chart view is searched with a chart and only returns charts of the same play style (OctantSpecs constitution.md,
-principle 2; common/charts.py).
+ビューは、マップの行（マップの版ごとに 1 つのベクトル: 曲、メタデータ）か譜面の行（譜面ごとに 1 つのベクトル）を
+持つ。譜面のビューは譜面で検索し、同じプレイスタイルの譜面だけを返す（OctantSpecs constitution.md、原則 2。
+common/charts.py）。
 
-A relation view (contract 2, ビューの種類) holds no vectors: what each map belongs to (its artists) and a score for
-pairs of members. Its closeness to a reference map is 1 when they share a member, else the best score of a pair of
-their members (the larger of the two directions), else 0 (Relation). `search` is for vector views only.
+関係のビュー（契約2、ビューの種類）はベクトルを持たない: 各マップが何に属するか（そのアーティスト）と、メンバーの
+対の点を持つ。基準のマップとの近さは、メンバーを共有すれば 1、そうでなければメンバーの対の一番よい点（2 つの向きの
+大きいほう）、それもなければ 0（Relation）。`search` はベクトルのビューだけ。
 """
 from pathlib import Path
 
@@ -22,16 +24,17 @@ import numpy as np
 from ..common import charts as chartids
 from ..common.dbformat import (ROW_KINDS, VIEW_KINDS, FormatError, chart_keys, listed, read_charts, read_hashes,
                                read_manifest, read_relation, read_superseded, read_view, view_kind)
-from ..common.dbformat import VersionError, apply_diff  # noqa: F401  (part of the API)
+from ..common.dbformat import VersionError, apply_diff  # noqa: F401  （API の一部）
 
 
-DBError = FormatError  # the DB cannot be used (OctantCompass reports `degraded`)
-# VersionError, a DBError: a manifest or index declares a version this OctantVector does not read (OctantSpecs contracts/, 契約の版)
+DBError = FormatError  # DB を使えない
+# VersionError（DBError の一種）: マニフェストか索引が、この OctantVector の読めない版を宣言している（OctantSpecs
+# contracts/、契約の版）
 
 
 class Relation:
-    """A relation view as arrays: the map rows that have members (sorted), each row's member indices (CSR: `ptr`,
-    `idx`) and, per member, its neighbours with the larger score of the two directions (CSR: `nptr`, `nidx`, `nscore`)."""
+    """配列にした関係のビュー: メンバーのあるマップの行（並べたもの）、各行のメンバーの添字（CSR: `ptr`、`idx`）、
+    メンバーごとの、2 つの向きの大きいほうの点での近所（CSR: `nptr`、`nidx`、`nscore`）。"""
 
     def __init__(self, members, pairs):
         names = sorted(set(members["member"]) | set(pairs["a"]) | set(pairs["b"]))
@@ -51,7 +54,7 @@ class Relation:
         i, j, s = np.concatenate([a, b]), np.concatenate([b, a]), np.concatenate([sc, sc])
         keep = i != j
         i, j, s = i[keep], j[keep], s[keep]
-        order = np.lexsort((-s, j, i))  # per (i, j), the larger score first
+        order = np.lexsort((-s, j, i))  # (i, j) ごとに、大きい点を先に
         i, j, s = i[order], j[order], s[order]
         first = np.ones(len(i), bool)
         first[1:] = (i[1:] != i[:-1]) | (j[1:] != j[:-1])
@@ -65,7 +68,7 @@ class Relation:
         return () if k is None else tuple(int(x) for x in self.idx[self.ptr[k]:self.ptr[k + 1]])
 
     def closeness(self, row):
-        """Closeness of every row with members (in `rows` order) to the map `row`; None when it has no members."""
+        """メンバーのある各行（`rows` の順）とマップ `row` との近さ。メンバーがなければ None。"""
         ms = self.members_of(row)
         if not ms:
             return None
@@ -77,10 +80,51 @@ class Relation:
         return np.maximum.reduceat(per_member[self.idx], self.ptr[:-1])
 
     def reference(self, rows):
-        """The mean closeness over the reference maps that have members (several references: their mean, as a vector
-        view takes their mean vector); None when none has."""
+        """メンバーのある基準のマップについての近さの平均（基準が複数: ベクトルのビューが平均のベクトルを取るのと同じく
+        平均）。どれもなければ None。"""
         found = [c for c in (self.closeness(r) for r in rows) if c is not None]
         return np.mean(found, 0) if found else None
+
+
+class Int8Vectors:
+    """int8 のまま持つ int8 のビュー（契約2: 値にその次元の尺度を掛けたものがベクトル）。ベクトルの float32 の配列の
+    代わりに使う。`x @ q` は行を塊ごとに通るので、float32 の写しが丸ごとできることはない。行を選ぶ添字（マスク、
+    list）なら Int8Vectors を返し、ほかの添字なら float32 の値を返す。"""
+
+    BLOCK = 16384
+
+    def __init__(self, q, scale):
+        self.q, self.scale = q, np.asarray(scale, np.float32)
+        self.shape, self.size, self.dtype = q.shape, q.size, np.dtype(np.float32)
+        self.nbytes = q.nbytes + self.scale.nbytes  # float32 の値の分ではなく、実際に使う分
+
+    def __len__(self):
+        return len(self.q)
+
+    def __matmul__(self, other):
+        w = np.asarray(other, np.float32)
+        w = w * (self.scale if w.ndim == 1 else self.scale[:, None])
+        out = np.empty((len(self.q),) + w.shape[1:], np.float32)
+        for a in range(0, len(self.q), self.BLOCK):
+            out[a:a + self.BLOCK] = self.q[a:a + self.BLOCK].astype(np.float32) @ w
+        return out
+
+    def __getitem__(self, idx):
+        if isinstance(idx, tuple):
+            r, c = idx
+            return self.q[r, c].astype(np.float32) * self.scale[c]
+        if isinstance(idx, (int, np.integer)):
+            return self.q[idx].astype(np.float32) * self.scale
+        return Int8Vectors(self.q[idx], self.scale)
+
+    def __array__(self, dtype=None, copy=None):
+        x = self.q.astype(np.float32) * self.scale
+        return x if dtype is None else x.astype(dtype)
+
+
+def _vectors(x, meta):
+    """推薦側が持つ形のビューのベクトル: float32（DB では float16）か Int8Vectors。"""
+    return Int8Vectors(x, meta["scale"]) if x.dtype == np.int8 else x.astype(np.float32)
 
 
 class DB:
@@ -89,16 +133,16 @@ class DB:
         self.path, self.manifest = path, manifest
         self.hashes = hashes
         self.pos = {h: n for n, h in enumerate(hashes)}
-        self.chart_keys = chart_keys  # charts.parquet order
+        self.chart_keys = chart_keys  # charts.parquet の順
         self.chart_pos = {k: n for n, k in enumerate(chart_keys)}
-        self.play_styles = play_styles  # per chart row
+        self.play_styles = play_styles  # 譜面の行ごと
         self.superseded = superseded
-        self.views = views  # {id@version: (vectors float32 (n, dim), row numbers into maps or charts)}
+        self.views = views  # {id@version: (ベクトル (n, dim): float32 か Int8Vectors, maps か charts の行の番号)}
         self.relations = relations or {}  # {id@version: Relation}
         self.rows = {k: manifest["views"][k]["rows"] for k in list(views) + list(self.relations)}
         self.skipped = skipped
-        self.chart_metrics = chart_metrics or {}  # charts.parquet numeric columns as float arrays (NaN when empty)
-        self._chart_maps = self._chart_map_array = self._hash_array = None
+        self.chart_metrics = chart_metrics or {}  # charts.parquet の数の列を float の配列で（空なら NaN）
+        self._chart_maps = self._chart_map_array = self._hash_array = self._style_array = None
         self._row_pos, self._styles = {}, {}
 
     @property
@@ -111,57 +155,63 @@ class DB:
                       **{k: (len(rel.rows), 0) for k, rel in self.relations.items()}})
 
     def current(self, h):
-        """The current version of the map version `h`: h itself, or the version superseded.parquet points it to;
-        None when this DB has neither (what that means is the caller's)."""
+        """マップの版 `h` の現行版: h そのものか、superseded.parquet が指す版。DB がどちらも持たなければ None（それが何を
+        意味するかは呼ぶ側が決める）。"""
         if h in self.pos:
             return h
         cur = self.superseded.get(h)
         return cur if cur in self.pos else None
 
     def chart_map_rows(self):
-        """Map row of each chart row (None when the chart's map version is not in maps.parquet)."""
+        """各譜面の行のマップの行（譜面のマップの版が maps.parquet になければ None）。"""
         if self._chart_maps is None:
             self._chart_maps = [self.pos.get(chartids.key_hash(k)) for k in self.chart_keys]
         return self._chart_maps
 
     def chart_map_array(self):
-        """chart_map_rows as an array, -1 where the chart's map version is not in maps.parquet."""
+        """chart_map_rows を配列にしたもの。譜面のマップの版が maps.parquet になければ -1。"""
         if self._chart_map_array is None:
             self._chart_map_array = np.array([-1 if m is None else m for m in self.chart_map_rows()], np.int64)
         return self._chart_map_array
 
     def hash_array(self):
-        """The map hashes as an array, for sorting map rows by hash."""
+        """マップの hash の配列。マップの行を hash で並べるため。"""
         if self._hash_array is None:
             self._hash_array = np.array(self.hashes)
         return self._hash_array
 
     def views_of_role(self, role):
-        """Vector views of a role."""
+        """役割のベクトルのビュー。"""
         return [k for k in self.views if self.manifest["views"][k].get("role") == role]
 
     def roles(self):
-        """{view: role} of every view this runtime reads, vector and relation views."""
+        """この推薦側が読むすべてのビュー（ベクトルと関係）の {view: role}。"""
         return {k: self.manifest["views"][k].get("role") for k in list(self.views) + list(self.relations)}
 
     def artists(self):
-        """The relation view of role `artist` (the first, by key), or None (OctantSpecs law 3.4)."""
+        """役割 `artist` の関係のビュー（キーで最初のもの）。なければ None（OctantSpecs 法 3.4）。"""
         keys = sorted(k for k in self.relations if self.manifest["views"][k].get("role") == "artist")
         return self.relations[keys[0]] if keys else None
 
     def genres(self):
-        """The genre words this DB can filter on: {word: (view, dimension)} from the views with role `genre`
-        (contract 2; the word list itself is not decided yet, so a DB may have none)."""
+        """この DB で絞り込めるジャンルの語: 役割 `genre` のビューからの {語: (view, 次元)}（契約2。語の一覧そのものは
+        まだ決まっていないので、DB が持たないこともある）。"""
         out = {}
         for k in self.views_of_role("genre"):
             for i, word in enumerate(self.manifest["views"][k].get("genres", [])):
                 out.setdefault(word, (k, i))
         return out
 
+    def play_style_array(self):
+        """play_styles を配列にしたもの（譜面の行ごとに 1 つ）。一度だけ作る。"""
+        if self._style_array is None:
+            self._style_array = np.array(self.play_styles, dtype=object)
+        return self._style_array
+
     def styles_in_view(self, view):
-        """Play style of each row of a chart view."""
+        """譜面のビューの各行のプレイスタイル。"""
         if view not in self._styles:
-            self._styles[view] = np.array(self.play_styles, dtype=object)[self.views[view][1]]
+            self._styles[view] = self.play_style_array()[self.views[view][1]]
         return self._styles[view]
 
     def row_in_view(self, view, row):
@@ -171,15 +221,14 @@ class DB:
 
 
 def _reads(v):
-    """Whether this runtime reads a view of the manifest; open_db skips the others (skippedViews): rows or a kind of a
-    newer minor version."""
+    """この推薦側がマニフェストのビューを読むか。open_db はほかを飛ばす（skippedViews）: 新しいマイナー版の行や種類。"""
     return v.get("rows") in ROW_KINDS and view_kind(v) in VIEW_KINDS and (view_kind(v) == "vector" or v["rows"] == "maps")
 
 
 def _info(m, read, skipped, sizes=None):
-    """What DB.info() and read_info() say of a DB: from its manifest m, the views read (the vector views, then the
-    relation views) and the skipped ones. sizes: {view: (rows, dim)} as read; without them (read_info) each view has
-    no "rows" and the dim the manifest gives (None when it gives none)."""
+    """DB.info() と read_info() が DB について言うこと: マニフェスト m から、読んだビュー（ベクトルのビュー、続いて
+    関係のビュー）と飛ばしたビュー。sizes: 読んだときの {view: (rows, dim)}。なければ（read_info）各ビューは "rows" を
+    持たず、dim はマニフェストにあるもの（なければ None）。"""
     views = {}
     for k in read:
         v = m["views"][k]
@@ -187,7 +236,7 @@ def _info(m, read, skipped, sizes=None):
         rows, dim = sizes[k] if sizes is not None else (None, 0 if view_kind(v) == "relation" else given)
         views[k] = {"role": v.get("role"), "kind": view_kind(v), "rowKind": v["rows"],
                     **({} if rows is None else {"rows": rows}), "dim": dim, "credits": _credits(v)}
-    # The genre words: those of the vector views with role `genre` (DB.genres)
+    # ジャンルの語: 役割 `genre` のベクトルのビューのもの（DB.genres）
     genres = {w for k in read if view_kind(m["views"][k]) == "vector" and m["views"][k].get("role") == "genre"
               for w in m["views"][k].get("genres", [])}
     return {"schemaVersion": m["schemaVersion"], "dbVersion": m["dbVersion"], "builtAt": m.get("builtAt"),
@@ -197,7 +246,7 @@ def _info(m, read, skipped, sizes=None):
 
 
 def _credits(view):
-    """A view's credits as given, keeping only text lines (the DB may come from anyone: contract 5 署名)."""
+    """ビューのクレジット。文字の行だけを残す（DB は誰から来るか分からない: 契約5 署名）。"""
     c = view.get("credits")
     return [x for x in c if isinstance(x, str)] if isinstance(c, list) else []
 
@@ -206,14 +255,14 @@ TEXT_COLS = ("hash", "characteristic", "difficulty", "play_style")
 
 
 def _numbers(values):
-    """True when a charts.parquet column holds numbers (or nothing): a metric, known (nps, njs, pass, tech) or added by
-    a newer DB (its other columns are carried as they are, dbformat.py)."""
+    """charts.parquet の列が数を持つ（か何も持たない）なら True: 指標で、知っているもの（nps、njs、pass、tech）か、
+    新しい DB が足したもの（ほかの列はそのまま運ぶ、dbformat.py）。"""
     return all(v is None or (isinstance(v, (int, float)) and not isinstance(v, bool)) for v in values)
 
 
 def open_db(path):
     path = Path(path)
-    manifest = read_manifest(path, "full")  # schemaVersion, kind and every file's SHA-256
+    manifest = read_manifest(path, "full")  # schemaVersion、kind、各ファイルの SHA-256
 
     hashes = read_hashes(path, manifest)
     ch = read_charts(listed(path, manifest, "charts.parquet"))
@@ -229,17 +278,17 @@ def open_db(path):
             relations[key] = Relation(*read_relation(path, manifest, key, len(hashes)))
             continue
         x, rows = read_view(path, manifest, key, n_rows[v["rows"]])
-        views[key] = (x.astype(np.float32), rows)
+        views[key] = (_vectors(x, v), rows)
     metrics = {c: np.array([np.nan if v is None else v for v in ch[c]], np.float64)
                for c in ch if c not in TEXT_COLS and _numbers(ch[c])}
     return DB(path, manifest, hashes, keys, list(ch["play_style"]), superseded, views, skipped, metrics, relations)
 
 
 def read_info(path):
-    """What DB.info() says of the full DB at path, from its manifest alone: each view without its "rows" (counted
-    when the view is read). No other file is read or checked (open_db checks them all), so it is quick and shows a DB
-    that is not open, as it says it is. DBError when there is no readable manifest of a full DB, VersionError when
-    its schemaVersion is one this OctantVector does not read."""
+    """path にある全量の DB について、マニフェストだけから DB.info() と同じことを言う: 各ビューは "rows" を除く（ビューを
+    読んだときに数える）。ほかのファイルは読みも確かめもしない（open_db がすべて確かめる）ので速く、開いていない DB を
+    自分の言うとおりに見せる。読める全量の DB のマニフェストがなければ DBError、schemaVersion がこの OctantVector の
+    読めないものなら VersionError。"""
     m = read_manifest(path, "full", check_files=False)
     try:
         views = m.get("views", {})
@@ -250,7 +299,7 @@ def read_info(path):
 
 
 def _current(db, h):
-    """-> (current version hash, the old hash it replaced or None)."""
+    """-> (現行版の hash, それが置き換えた古い hash か None)。"""
     cur = db.current(h)
     if cur is None:
         raise KeyError(f"{h} is not in DB {db.version}")
@@ -258,14 +307,13 @@ def _current(db, h):
 
 
 def search(db, query, view, k=10):
-    """Top-k of one view (`id@version`).
+    """1 つのビュー（`id@version`）の上位 k。
 
-    A map view takes a version hash and returns {"hash", "rank", "score"}. A chart view takes a chart, as a chart key
-    or (hash, characteristic, difficulty), and returns {"hash", "characteristic", "difficulty", "rank", "score"} for
-    charts of the same play style only. An old version is replaced by the current version of the same map (for a
-    chart: the same characteristic and difficulty of the current version, which may be a remade chart; "replaced"
-    says it happened). -> {"view", "query", "replaced", "results"}; empty results when the query has no vector in
-    that view."""
+    マップのビューは版の hash を取り、{"hash", "rank", "score"} を返す。譜面のビューは譜面を、譜面のキーか
+    (hash, characteristic, difficulty) で取り、同じプレイスタイルの譜面だけの {"hash", "characteristic",
+    "difficulty", "rank", "score"} を返す。旧い版は同じマップの現行版に置き換える（譜面なら、現行版の同じ
+    characteristic と difficulty。作り直された譜面のこともある。"replaced" がそれを示す）。-> {"view", "query",
+    "replaced", "results"}。クエリがそのビューにベクトルを持たなければ results は空。"""
     if view not in db.views:
         raise KeyError(f"{view} is not in DB {db.version}; views: {', '.join(db.views)}")
     x, rows = db.views[view]

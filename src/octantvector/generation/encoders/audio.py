@@ -1,14 +1,14 @@
-"""The shapes audio views take, shared by the built-in views and plugins (octantvector.plugin).
+"""音声のビューが取る形。組み込みのビューとプラグイン（octantvector.plugin）で共通。
 
-ClipAudioEncoder  n_clips clips of clip_s seconds (base.clips), resampled to `sr`, turned into model input by
-                  `features` in the CPU workers; the model gives one vector per clip (`clip_vectors`), L2-normalised
-                  per clip when `l2_clips`, and the song's vector is their mean. `stem = "vocal"` embeds the clips'
-                  vocal stem instead of the mix (stem.py).
-HiddenMean        a ClipAudioEncoder whose clip vector is the time-mean of the outputs of the encoder layers `layers`
-                  (1-based), averaged over those layers.
+ClipAudioEncoder  clip_s 秒の箇所を n_clips 個（base.clips）取り、`sr` にリサンプルし、CPU のワーカーで
+                  `features` がモデルの入力にする。モデルは箇所ごとにベクトルを 1 つ出し（`clip_vectors`）、
+                  `l2_clips` なら箇所ごとに L2 正規化し、曲のベクトルはその平均。`stem = "vocal"` なら、ミックスの
+                  代わりに箇所のボーカルのステムを埋め込む（stem.py）。
+HiddenMean        箇所のベクトルを、エンコーダーの層 `layers`（1 始まり）の出力の時間平均を層で平均したものにする
+                  ClipAudioEncoder。
 
-The first of `models` is the one model_dir() and the load hooks read. A subclass supplies load_processor, load_model
-and (for ClipAudioEncoder) clip_vectors; heavy imports belong inside them.
+`models` の最初のものが、model_dir() と読み込みのフックが読むモデル。サブクラスは load_processor、load_model と
+（ClipAudioEncoder では）clip_vectors を用意する。重い import はその中に置く。
 """
 import numpy as np
 
@@ -20,13 +20,13 @@ class ClipAudioEncoder(AudioEncoder):
     clip_s = 10
     n_clips = 3
     l2_clips = False
-    stem = None  # or "vocal"
+    stem = None  # か "vocal"
 
     def __init_subclass__(cls, **kw):
         super().__init_subclass__(**kw)
         if cls.stem not in (None, "vocal"):
             raise ValueError(f"{cls.__name__}: stem must be None or 'vocal', got {cls.stem!r}")
-        if cls.stem == "vocal" and "stem" in cls.__dict__:  # the class that turns the stem on takes its settings
+        if cls.stem == "vocal" and "stem" in cls.__dict__:  # ステムを有効にしたクラスがその設定を受け取る
             for k, v in stems.VOCAL.items():
                 if k not in cls.__dict__:
                     setattr(cls, k, v)
@@ -44,26 +44,26 @@ class ClipAudioEncoder(AudioEncoder):
             p["stem"] = stems.params()
         return p
 
-    # hooks
+    # フック
     def load_processor(self, folder):
-        """-> the feature extractor read from the model's local folder."""
+        """-> モデルの手元のフォルダから読んだ特徴抽出器。"""
         raise NotImplementedError
 
     def load_model(self, folder, device):
-        """-> the model read from the model's local folder, on `device`, in eval mode."""
+        """-> モデルの手元のフォルダから読み、`device` に載せ、eval モードにしたモデル。"""
         raise NotImplementedError
 
     def features(self, clips):
-        """Clips at self.sr -> the model input (picklable: it crosses from the worker processes)."""
+        """self.sr の箇所 -> モデルの入力（pickle できること: ワーカーのプロセスから渡るため）。"""
         return self.proc(clips, sampling_rate=self.sr, return_tensors="np")["input_values"].astype(np.float32)
 
     def clip_vectors(self, x):
-        """Model input of n clips -> (n, dim) float32 numpy."""
+        """n 個の箇所のモデルの入力 -> (n, dim) の float32 の numpy。"""
         raise NotImplementedError
 
-    # the heavy pass
+    # 重い処理
     def setup_worker(self):
-        if not self.stem:  # with a stem the clips only exist after separation, in the main process
+        if not self.stem:  # ステムがあると、箇所は分離した後にメインのプロセスでしかできない
             self.proc = self.load_processor(self.model_dir())
 
     def setup_model(self, device):
@@ -96,27 +96,27 @@ class ClipAudioEncoder(AudioEncoder):
         return self._sep.vocals(mix)
 
     def stem_vectors(self, voc):
-        """Vocal stems of clips at SEP_SR -> (clips, dim)."""
+        """SEP_SR の箇所のボーカルのステム -> (clips, dim)。"""
         return self._rows(self.clip_vectors(self.features([resample(v, stems.SEP_SR, self.sr) for v in voc])))
 
 
 class HiddenMean(ClipAudioEncoder):
-    layers = ()  # 1-based encoder layer numbers
-    half = False  # run the model in fp16 on CUDA
+    layers = ()  # エンコーダーの層の番号（1 始まり）
+    half = False  # CUDA ではモデルを fp16 で動かす
 
     def params(self):
         return {**super().params(), "layers": list(self.layers),
                 "pool": "time-mean per layer, mean over layers and clips"}
 
     def encoder_layers(self):
-        """The model's encoder layers, in order (hidden state i is the output of layer i)."""
+        """モデルのエンコーダーの層、順に（隠れ状態 i は層 i の出力）。"""
         return self.model.encoder.layers
 
     def setup_model(self, device):
         super().setup_model(device)
         if self.half and str(device).startswith("cuda"):
             self.model = self.model.half()
-        # nothing reads the layers after the last one taken, so they are dropped: same output, less work
+        # 最後に使う層より後は誰も読まないので外す: 出力は同じで、手間が減る
         del self.encoder_layers()[max(self.layers):]
         self._cap = {}
         for i in self.layers:
@@ -124,7 +124,7 @@ class HiddenMean(ClipAudioEncoder):
                 lambda mod, inp, out, i=i: self._cap.__setitem__(i, out[0] if isinstance(out, tuple) else out))
 
     def clip_vectors(self, x):
-        """(clips, samples) feature-extracted input -> (clips, dim): time-mean per layer, mean over layers."""
+        """(clips, samples) の特徴抽出した入力 -> (clips, dim): 層ごとの時間平均を、層で平均する。"""
         import torch
         dtype = next(self.model.parameters()).dtype
         with torch.inference_mode():

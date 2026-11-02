@@ -1,4 +1,4 @@
-"""octantvector command line. Settings: OctantSpecs octantvector/config.md. Usage examples: README.md."""
+"""octantvector のコマンドライン。設定は OctantSpecs octantvector/config.md、使い方の例は README.md。"""
 import argparse
 import json
 import sys
@@ -49,8 +49,8 @@ def cmd_update(cfg, a):
 
 
 def _index(cfg, a):
-    """Index from the --views / --calibration / --missing options shared by search and the evaluations; with
-    --missing reweight it keeps the maps the runtime would (minViewWeight, common/params.py)."""
+    """search と評価で共通の --views / --calibration / --missing から作る索引。--missing reweight では、推薦側が残す
+    マップを残す（minViewWeight、common/params.py）。"""
     from .generation.search import Index, parse_views
     cal = None
     if a.calibration:
@@ -76,10 +76,10 @@ def cmd_calibrate(cfg, a):
 def cmd_release(cfg, a):
     from .generation import calibration, dbrelease
     from .generation.api import _split
-    views, relations = _split(a.views)  # encoder ids and relation names, checked as the api checks them
+    views, relations = _split(a.views)  # エンコーダーの id と関係の名前。api と同じく確かめる
     dbrelease.release(cfg, views, calibration.load(a.calibration) if a.calibration else None, full=a.full,
                       presets=a.presets, notice=Path(a.notice).read_text(encoding="utf-8") if a.notice else None,
-                      relations=relations)
+                      relations=relations, export=json.loads(Path(a.export).read_text()) if a.export else None)
 
 
 def cmd_apply(cfg, a):
@@ -91,9 +91,8 @@ def cmd_apply(cfg, a):
 
 
 def cmd_db(cfg, a):
-    """Open a distributed DB as OctantCompass would (checks included) and optionally search it. A query is a BeatSaver
-    key or a version hash; chart views take "<key or hash>:<characteristic>:<difficulty>", or use the hardest
-    Standard chart of the map when only the map is given."""
+    """配布 DB を推薦側と同じく開き（確認も含む）、必要なら検索する。クエリは BeatSaver の key か版の hash。譜面の
+    ビューは "<key か hash>:<characteristic>:<difficulty>" を取り、マップだけなら Standard の一番難しい譜面を使う。"""
     from .common import charts
     from .runtime.db import DBError, open_db, search
     try:
@@ -171,7 +170,7 @@ def cmd_eval_neighbours(cfg, a):
 
 
 def cmd_playdata(cfg, a):
-    """Build a signals file from the user's own data files (written only to --out)."""
+    """ユーザー自身のデータのファイルから signals のファイルを作る（書くのは --out だけ）。"""
     from pathlib import Path
     from .eval import playdata as pd
     md = _meta(cfg) if a.custom_levels else {}
@@ -235,7 +234,7 @@ def cmd_swing_eval(cfg, a):
 
 
 def cmd_swing_trace(cfg, a):
-    """Simulated swings of one map: per-swing table, ratings, and style tags when a style model is configured."""
+    """1 マップのスイングのシミュレーション: スイングごとの表、評価、スタイルのモデルがあればスタイルタグ。"""
     from .generation.archive import MapZip
     from .generation.swing import NAMES, chart_features, params, standard_charts, style
     from .generation.swing.features import HAZARD_NAMES
@@ -309,6 +308,8 @@ def main(argv=None):
                                      "version's)")
     p.add_argument("--notice", help="Markdown file with the DB's terms and credits to put in the manifest (default: the "
                                     "previous version's)")
+    p.add_argument("--export", help='JSON file with how each view is written, {view: {"dim": 128, "dtype": "int8"}} '
+                                    "(default: what the calibration has; {}: every view as its encoder made it)")
     p = sub.add_parser("apply", help="apply a diff to a full DB into a new folder, as OctantCompass does")
     p.add_argument("base")
     p.add_argument("diff")
@@ -339,10 +340,10 @@ def main(argv=None):
     p.add_argument("--playlists", nargs="*", default=[])
     p.add_argument("--replays", nargs="*", default=[], help="replay folders (only file names are read)")
     p.add_argument("--out", required=True)
-    p = sub.add_parser("eval-personal", help="leave-one-out against your liked maps (OctantSpecs octantvector/design.md)")
+    p = sub.add_parser("eval-personal", help="leave-one-out against your liked maps")
     p.add_argument("--signals", required=True, help="file written by `octantvector playdata`")
     p.add_argument("--views", required=True, help="id:weight,...")
-    _index_args(p, missing=("drop",))  # the per-view profile scores need every view
+    _index_args(p, missing=("drop",))  # ビューごとのプロファイルの点にはすべてのビューが要る
     p.add_argument("--profile", default="km3", help="mean | km<k>")
     p.add_argument("--beta", type=float, default=0.0, help="difficulty-fit weight")
     p.add_argument("--no-csls", action="store_true")
@@ -367,7 +368,7 @@ def main(argv=None):
     p.add_argument("--diff", help="difficulty (default: hardest Standard)")
     p.add_argument("--swings", action="store_true", help="print every swing")
     a = ap.parse_args(argv)
-    try:  # the one place a generation error becomes the command's exit message
+    try:  # 生成のエラーがコマンドの終了メッセージになるのはここだけ
         cfg = config.load()
         {"check": cmd_check, "update": cmd_update, "calibrate": cmd_calibrate, "release": cmd_release, "apply": cmd_apply, "db": cmd_db, "search": cmd_search, "eval-neighbours": cmd_eval_neighbours,
          "playdata": cmd_playdata, "eval-personal": cmd_eval_personal, "swing-dataset": cmd_swing_dataset,

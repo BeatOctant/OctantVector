@@ -1,22 +1,21 @@
-"""The one reader of a map's chart files: the charts Info.dat (v2 or v4) lists, and one difficulty (.dat, formats
-v2/v3/v4) -> timed objects, for the swing simulation and the pattern statistics (encoders/chart_patterns.py).
+"""マップの譜面のファイルを読むただ 1 つの入口: Info.dat（v2 か v4）にある譜面と、1 つの難易度（.dat。形式 v2/v3/v4）
+-> 時刻付きの物。スイングのシミュレーションとパターンの統計（encoders/chart_patterns.py）で使う。
 
-Times are converted to seconds through the chart's BPM changes (v2 `_events` type 100, v3 `bpmEvents`; v2
-`_BPMChanges` is editor data and ignored); v4 keeps BPM changes in a separate audio file, so v4 charts use the
-Info.dat BPM throughout. Noodle Extensions note and bomb placement (`coordinates` / `_position`) is used.
-Mapping Extensions precision positions (|x| >= 1000), wall sizes (>= 1000) and angles (cut 1000..1360) are mapped
-back to grid units and degrees. Noodle Extensions fake walls and bombs are kept but flagged (scenery the player
-cannot touch); fake colour notes are left out.
+時刻は譜面の BPM の変化をたどって秒にする（v2 の `_events` の type 100、v3 の `bpmEvents`。v2 の `_BPMChanges` は
+エディターのデータなので無視する）。v4 は BPM の変化を別の音声のファイルに持つので、v4 の譜面は通して Info.dat
+の BPM を使う。Noodle Extensions のノーツと爆弾の配置（`coordinates` / `_position`）を使う。Mapping Extensions の
+精密な位置（|x| >= 1000）、壁の大きさ（>= 1000）、角度（切る向き 1000..1360）は、マスの単位と度に戻す。
+Noodle Extensions の偽の壁と爆弾は残して印を付け（プレイヤーが触れない背景）、偽の色ノーツは外す。
 """
 from dataclasses import dataclass, field
 
 from ...common.charts import difficulty_rank
 
-DIR_DEG = {0: 90.0, 1: 270.0, 2: 180.0, 3: 0.0, 4: 135.0, 5: 45.0, 6: 225.0, 7: 315.0}  # 8 = dot (None)
+DIR_DEG = {0: 90.0, 1: 270.0, 2: 180.0, 3: 0.0, 4: 135.0, 5: 45.0, 6: 225.0, 7: 315.0}  # 8 = ドット（None）
 
 
 def beatmaps(info):
-    """[(characteristic, difficulty, filename, njs)] for every chart listed in Info.dat (v2 or v4)."""
+    """Info.dat（v2 か v4）にあるすべての譜面の [(characteristic, difficulty, filename, njs)]。"""
     out = []
     for s in info.get("_difficultyBeatmapSets", []):
         c = s.get("_beatmapCharacteristicName")
@@ -28,7 +27,7 @@ def beatmaps(info):
 
 
 def standard_beatmaps(info):
-    """[(difficulty, filename, njs)] for the Standard characteristic, easiest first."""
+    """Standard の characteristic の [(difficulty, filename, njs)]。易しい順。"""
     return sorted(((d, fn, njs) for c, d, fn, njs in beatmaps(info) if c == "Standard"),
                   key=lambda t: difficulty_rank(t[0]))
 
@@ -39,14 +38,14 @@ def bpm_of(info):
 
 @dataclass
 class Note:
-    t: float            # seconds
-    b: float            # beats (json time)
-    x: float            # lane 0..3
-    y: float            # row 0..2
-    c: int              # 0 red (left hand), 1 blue (right hand)
-    ang: float | None   # cut direction in degrees, None for a dot
-    tail: tuple | None = None  # chain head: (tail x, tail y)
-    cut: int = 8        # the cut direction as written (0..7, 8 = dot; Mapping Extensions 1000..1360)
+    t: float            # 秒
+    b: float            # 拍（json の時刻）
+    x: float            # 列 0..3
+    y: float            # 行 0..2
+    c: int              # 0 赤（左手）、1 青（右手）
+    ang: float | None   # 切る向き（度）。ドットは None
+    tail: tuple | None = None  # チェーンの頭: (尾の x, 尾の y)
+    cut: int = 8        # 書かれたままの切る向き（0..7、8 = ドット。Mapping Extensions は 1000..1360）
 
 
 @dataclass
@@ -74,14 +73,14 @@ def _pos(v):
 
 
 def _size(v):
-    """Wall width/height; Mapping Extensions precision sizes (>= 1000) are 1000 + 1000 * units."""
+    """壁の幅と高さ。Mapping Extensions の精密な大きさ（>= 1000）は 1000 + 1000 * 単位。"""
     v = float(v or 0)
     return v / 1000 - 1 if v >= 1000 else v
 
 
 def _fake(o):
-    """Noodle Extensions objects the player cannot touch (v2 `_fake` / `_interactable: false`, v3 `fake` /
-    `uninteractable`): scenery only."""
+    """プレイヤーが触れられない Noodle Extensions の物（v2 の `_fake` / `_interactable: false`、v3 の `fake` /
+    `uninteractable`）: 背景にすぎない。"""
     cd = o.get("_customData") if "_time" in o else o.get("customData")
     if not isinstance(cd, dict):
         return False
@@ -89,8 +88,8 @@ def _fake(o):
 
 
 def _v2_wall_rows(kind):
-    """v2 `_type` -> (bottom row, height in rows): 0 full height, 1 overhead (crouch); Mapping Extensions
-    1000..4000 is a full-height wall of (kind - 1000) / 1000 * 5 rows. Anything else is taken as full height."""
+    """v2 の `_type` -> (下の行, 行の数での高さ): 0 は全高、1 は頭上（しゃがむ）。Mapping Extensions の 1000..4000 は
+    (kind - 1000) / 1000 * 5 行の全高の壁。それ以外は全高とみなす。"""
     kind = int(kind or 0)
     if kind == 1:
         return 2, 3
@@ -105,7 +104,7 @@ def _cut(d):
 
 def _ang(d, offset=0.0):
     d = int(d or 0)
-    if 1000 <= d <= 1360:  # Mapping Extensions: degrees counter-clockwise from "down"
+    if 1000 <= d <= 1360:  # Mapping Extensions: 「下」から反時計回りの度
         return (270.0 + d - 1000) % 360
     if d not in DIR_DEG:
         return None
@@ -113,11 +112,11 @@ def _ang(d, offset=0.0):
 
 
 class _Clock:
-    """json beat -> seconds through BPM changes [(beat, bpm)]."""
+    """json の拍 -> BPM の変化 [(beat, bpm)] をたどった秒。"""
 
     def __init__(self, bpm, changes):
         pts = sorted((float(b), float(m)) for b, m in changes if m and float(m) > 0)
-        self.seg = [(0.0, 0.0, float(bpm))]  # (beat, seconds at beat, bpm from here)
+        self.seg = [(0.0, 0.0, float(bpm))]  # (拍, その拍の秒, そこからの bpm)
         for b, m in pts:
             b0, s0, m0 = self.seg[-1]
             if b < b0:
@@ -132,9 +131,9 @@ class _Clock:
 
 
 def _changes(dat):
-    """[(beat, bpm)] from the BPM changes the game itself uses: v3 `bpmEvents` and v2 `_events` type 100.
-    v2 `_BPMChanges` (top level or in `_customData`) is editor grid data the game ignores: v2 note times are already
-    in Info.dat-BPM beats, so honouring it ran some clocks twice as fast (exp16). Malformed entries are skipped."""
+    """ゲーム自体が使う BPM の変化からの [(beat, bpm)]: v3 の `bpmEvents` と v2 の `_events` の type 100。
+    v2 の `_BPMChanges`（最上位か `_customData` の中）はゲームが無視するエディターのグリッドのデータ: v2 のノーツの
+    時刻はもう Info.dat の BPM の拍なので、それに従うと時計が 2 倍速で進む譜面があった。壊れた項目は飛ばす。"""
     src = dat.get("bpmEvents")
     if isinstance(src, list) and src:
         return [(e.get("b", 0), e.get("m")) for e in src if isinstance(e, dict)]
@@ -145,8 +144,8 @@ def _changes(dat):
 
 
 def _noodle_xy(o, x, y):
-    """Noodle Extensions placement (v3 customData.coordinates, v2 _customData._position: [x, y] with x = 0 at the
-    grid centre) overrides the grid position."""
+    """Noodle Extensions の配置（v3 の customData.coordinates、v2 の _customData._position: [x, y]。x = 0 がグリッドの
+    中央）は、マスの位置より優先する。"""
     cd = o.get("customData") if "b" in o else o.get("_customData")
     c = cd.get("coordinates" if "b" in o else "_position") if isinstance(cd, dict) else None
     if isinstance(c, list) and len(c) >= 2 and all(isinstance(v, (int, float)) for v in c[:2]):
@@ -173,7 +172,7 @@ def parse(dat, bpm, njs) -> Chart:
             walls.append((clock(b), clock(b + d) - clock(b), _pos(o.get("_lineIndex")), y, _size(o.get("_width", 1)), h, b,
                           _fake(o)))
         arcs = len(dat.get("_sliders", []))
-    elif "colorNotesData" in dat:  # v4: objects index into *Data arrays
+    elif "colorNotesData" in dat:  # v4: 物は *Data の配列への添字
         nd, bd, od = dat.get("colorNotesData", []), dat.get("bombNotesData", []), dat.get("obstaclesData", [])
         for n in dat.get("colorNotes", []):
             d = nd[n.get("i", 0)] if nd else {}
@@ -195,7 +194,7 @@ def parse(dat, bpm, njs) -> Chart:
         arcs, chains = len(dat.get("arcs", [])), len(dat.get("chains", []))
     else:  # v3
         cd = dat.get("customData") if isinstance(dat.get("customData"), dict) else {}
-        for n in dat.get("colorNotes", []):  # Noodle's customData.fakeColorNotes are never hit: left out
+        for n in dat.get("colorNotes", []):  # Noodle の customData.fakeColorNotes は打たれない: 外す
             if not _fake(n):
                 x, y = _noodle_xy(n, _pos(n.get("x")), _pos(n.get("y")))
                 notes.append(Note(clock(n.get("b", 0)), n.get("b", 0), x, y, n.get("c", 0),

@@ -64,7 +64,7 @@ def world(tmp_path, cfg, monkeypatch):
 def test_release_has_the_contract_2_layout(world):
     tmp_path, cal, pool, out = world
     m = json.loads((out / "manifest.json").read_text())
-    assert out.name == "2026.10.02" and m["schemaVersion"] == "1.1" and m["baseDbVersion"] is None
+    assert out.name == "2026.10.02" and m["schemaVersion"] == "2.0" and m["baseDbVersion"] is None
     assert m["calibrationId"] == cal["id"] and m["counts"] == {"maps": 30, "charts": 30, "superseded": 1}
     assert m["kind"] == "full" and m["diffsSinceFull"] == 0
     v = m["views"][CP]
@@ -124,10 +124,10 @@ def test_open_db_refuses_a_tampered_or_newer_db(world):
         open_db(out)
     p.write_bytes(good)
     m = json.loads((out / "manifest.json").read_text())
-    (out / "manifest.json").write_text(json.dumps({**m, "schemaVersion": "2.0"}))
-    with pytest.raises(VersionError, match="schemaVersion '2.0'"):  # a DBError the host can tell apart
+    (out / "manifest.json").write_text(json.dumps({**m, "schemaVersion": "3.0"}))
+    with pytest.raises(VersionError, match="schemaVersion '3.0'"):  # a DBError the host can tell apart
         open_db(out)
-    m["schemaVersion"] = "1.3"  # a newer minor: unknown keys and row kinds are ignored
+    m["schemaVersion"] = "2.3"  # a newer minor: unknown keys and row kinds are ignored
     m["somethingNew"] = 1
     m["views"]["future@1"] = {"rows": "notes", "file": "x.npy", "rowsFile": "x.rows.npy"}
     (out / "manifest.json").write_text(json.dumps(m))
@@ -196,7 +196,7 @@ def newer(folder, bump=()):
         pq.write_table(t.append_column(field, pa.array([value(h) for h in t.column("hash").to_pylist()], field.type)),
                        folder / name)
     m = manifest(folder)
-    m.update(schemaVersion="1.2", chartMetrics={"pass": {"source": "swing@3"}}, somethingNew={"a": [1, 2]})
+    m.update(schemaVersion="2.2", chartMetrics={"pass": {"source": "swing@3"}}, somethingNew={"a": [1, 2]})
     for v in m["views"].values():
         v["unit"] = "cosine"
     m["files"] = {n: dbformat.sha256(folder / n) for n in m["files"]}
@@ -218,7 +218,7 @@ def test_a_diff_carries_what_this_octantvector_does_not_know(world, cfg):
     same_content(dbformat.read_content(applied), dbformat.read_content(new))
     ma, mn = manifest(applied), manifest(new)
     assert {k: v for k, v in ma.items() if k != "files"} == {k: v for k, v in mn.items() if k != "files"}
-    assert ma["schemaVersion"] == "1.2" and ma["chartMetrics"] == {"pass": {"source": "swing@3"}}
+    assert ma["schemaVersion"] == "2.2" and ma["chartMetrics"] == {"pass": {"source": "swing@3"}}
     assert ma["somethingNew"] == {"a": [1, 2]} and {v["unit"] for v in ma["views"].values()} == {"cosine"}
     assert pq.read_table(applied / "maps.parquet").column("bpm").to_pylist()[:2] == [1.0, 1002.0]  # k2 changed
     assert open_db(applied).version == new.name

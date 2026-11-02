@@ -123,6 +123,17 @@ def test_chart_views_compare_one_play_style_only(db):
     assert H(5) not in {it["hash"] for it in out["items"]}  # the seed's own map is left out
 
 
+def test_a_seed_keeps_the_list_to_its_play_style_in_map_views_too(db):
+    """A map view gives every chart of a map one value; the seed chart still decides the play style of the list."""
+    for weights in ({"music_x": 1}, {"music_x": 1, "chart_x": 1}):
+        out = recommend(db, [], {"seed": seed(H(5), "OneSaber", "Expert"), "count": 20, "weights": weights},
+                        ONE_SONG_EACH)
+        assert out["items"] and {it["characteristic"] for it in out["items"]} == {"OneSaber"}
+    out = recommend(db, [], {"seed": seed(H(5), "Standard", "Expert"), "count": 40, "chartsPerMap": 3,
+                             "weights": {"music_x": 1}}, ONE_SONG_EACH)
+    assert {it["characteristic"] for it in out["items"]} == {"Standard"}
+
+
 def test_seed_and_old_versions_are_replaced(db):
     out = recommend(db, [like(OLD)], {"seed": seed(OLD, "Standard", "Hard"), "count": 3})
     assert {"from": OLD, "to": H(0)} in out["replaced"]

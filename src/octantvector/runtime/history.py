@@ -1,19 +1,18 @@
-"""The player's history as OctantCompass passes it: contract 3 (OctantPath to OctantCompass) `events`, unfiltered (OctantSpecs contracts/, contract 1 (OctantCompass to OctantVector)).
+"""プレイヤーの履歴: 契約3（OctantPath to OctantCompass）の `events` を選り分けずに受け取る（OctantSpecs contracts/、
+契約1（OctantCompass to OctantVector））。
 
-Each event has `type` (upvote / downvote / like / play / user_delete / recommendation / imported_play), `hash` and
-`at`. A play also has `characteristic`, `difficulty`, `result` (clear / fail / quit / restart) and may have `modifiers` and a
-score.
-`imported_play` (`count` per chart, made once by OctantPath from the game's PlayerData when OctantPath is installed)
-alone makes a map neither liked nor a goal (likes.py): the count includes quits and has no results (OctantSpecs
-octantvector/law.md 4.1). Its chart still says which charts of a liked map the player played, so it can stand in for
-plays as a taste reference (recommend.py). One with `cleared` (PlayerData has a score for the chart: cleared at least
-once, modifiers unknown) fills the strong set behind the player's own clears (skill.py), so the skill is there from
-the first play; it never counts as a clear or a fail anywhere else.
-Granularity is kept: plays are per chart, the other signals per map (OctantSpecs constitution.md, principle 2).
+各出来事は `type`（upvote / downvote / like / play / user_delete / recommendation / imported_play）、`hash`、
+`at` を持つ。プレイはさらに `characteristic`、`difficulty`、`result`（clear / fail / quit / restart）を持ち、
+`modifiers` とスコアを持つことがある。
+`imported_play`（譜面ごとの `count`。OctantPath を入れたときに、ゲームの PlayerData から一度だけ作られる）だけでは、
+好意にも目標にもならない（likes.py）: 回数は途中終了を含み、結果がない（OctantSpecs 法 4.1）。それでも、その譜面は
+好意のマップのどの譜面を遊んだかを示すので、好みの基準としてプレイの代わりになれる（recommend.py）。`cleared` の
+あるもの（PlayerData にその譜面のスコアがある: 一度はクリアした。修飾は分からない）は、自分のクリアの後ろで得意な
+譜面の枠を埋める（skill.py）ので、実力が最初のプレイからある。ほかのどこでもクリアにも失敗にも数えない。
+粒度は保つ: プレイは譜面ごと、ほかの signal はマップごと（OctantSpecs constitution.md、原則 2）。
 
-An event on an old version is moved to the current version of the same map; a play moves to the chart with the same
-characteristic and difficulty, which may be a remade chart. Every move is reported. Events on maps the DB does not
-know are kept out and counted.
+旧い版の出来事は、同じマップの現行版に移す。プレイは characteristic と difficulty が同じ譜面に移す（作り直された
+譜面のこともある）。移したものはすべて報告する。DB が知らないマップの出来事は入れずに数える。
 """
 from dataclasses import dataclass, field
 
@@ -24,38 +23,36 @@ from . import likes
 @dataclass
 class Play:
     hash: str
-    chart: str | None  # chart key in the DB, or None when the current version has no such chart
-    result: str        # the event's result as sent (clear / fail / quit / restart); the counts fold restart into quit
+    chart: str | None  # DB での譜面のキー。現行版にその譜面がなければ None
+    result: str        # 送られたままの結果（clear / fail / quit / restart）。数では restart を quit にまとめる
     at: str
-    plain: bool        # speed 1.0 and no modifiers: usable for the skill (difficulty-fit.md, 2)
+    plain: bool        # 速度 1.0 で修飾なし: 実力に使える
 
 
 @dataclass
 class History:
-    counts: dict = field(default_factory=dict)    # hash -> merged counts in likes.py's form
-    plays: list = field(default_factory=list)     # Play, oldest first
-    replaced: list = field(default_factory=list)  # {"from", "to"} for every old version moved to the current one
-    imported: dict = field(default_factory=dict)  # hash -> chart keys in the DB its imported_play events name
-    imported_clears: dict = field(default_factory=dict)  # chart key in the DB -> PlayerData play count, for the
-                                                         # imported_play events with `cleared`
-    unknown: int = 0                              # events on maps the DB does not have
+    counts: dict = field(default_factory=dict)    # hash -> likes.py の形でまとめた数
+    plays: list = field(default_factory=list)     # Play。古い順
+    replaced: list = field(default_factory=list)  # 現行版に移した旧い版ごとの {"from", "to"}
+    imported: dict = field(default_factory=dict)  # hash -> その imported_play の出来事が指す、DB での譜面のキー
+    imported_clears: dict = field(default_factory=dict)  # `cleared` のある imported_play の出来事の、DB での譜面のキー -> PlayerData のプレイ回数
+    unknown: int = 0                              # DB にないマップの出来事
 
     def liked(self):
         return {h for h, s in self.counts.items() if likes.classify(s) == "liked"}
 
     def known(self):
-        """Maps the player already interacted with (played, liked, voted on, deleted)."""
+        """プレイヤーがもう関わったマップ（遊んだ、お気に入りにした、投票した、削除した）。"""
         return {h for h, s in self.counts.items() if any(s.values())}
 
     def goals(self):
-        """Goals (a favourite or an upvote on a map not cleared yet, law 4.1), except maps the player deleted, which
-        stay out like any other known map. Inferred, not decided in OctantSpecs: law 4.1 only makes a deleted map less
-        likely, and how strongly is open (open.md)."""
+        """目標（まだクリアしていないマップのお気に入りか Upvote、法 4.1）。ただし、プレイヤーが削除したマップは、ほかの
+        既知のマップと同じく外したまま。推測: 法 4.1 は削除したマップを出にくくするとだけ書き、どれだけかは書いていない。"""
         return {h for h, s in self.counts.items() if likes.classify(s) == "goal" and not s["deleted"]}
 
 
 def _plain(e):
-    """Speed 1.0 and no other modifier (`modifiers`: {"speed": 1.0, "noFail": false}, contract 3)."""
+    """速度 1.0 で、ほかの修飾なし（`modifiers`: {"speed": 1.0, "noFail": false}、契約3）。"""
     mods = e.get("modifiers") or {}
     return mods.get("speed") in (None, 1, 1.0) and not any(v for k, v in mods.items() if k != "speed")
 
@@ -75,7 +72,7 @@ def parse(db, events):
         t, h = e.get("type"), e.get("hash")
         if not h or t not in ("upvote", "downvote", "like", "like_removed", "play", "user_delete", "recommendation", "imported_play"):
             continue
-        if t == "recommendation":  # never a taste signal (contract 1, 好みの判定ルール)
+        if t == "recommendation":  # 好みの signal には使わない（法 4.1）
             continue
         cur = _current(db, h, hist.replaced, seen)
         if cur is None:
@@ -84,10 +81,10 @@ def parse(db, events):
         s = hist.counts.setdefault(cur, {"favorite": 0, "upvote": 0, "play": 0, "finished": 0, "failed": 0,
                                          "quit": 0, "deleted": 0, "pd_playcount": 0, "returned": 0})
         if t in ("upvote", "downvote"):
-            votes[cur] = t  # the latest vote wins (votedSongs.json overwrites too)
+            votes[cur] = t  # 最後の投票が勝つ（votedSongs.json も上書きする）
         elif t == "like":
             s["favorite"] = 1
-        elif t == "like_removed":  # back to no favorite, not a dislike; the latest like/like_removed wins
+        elif t == "like_removed":  # お気に入りでなくなっただけで、嫌いではない。最後の like/like_removed が勝つ
             s["favorite"] = 0
         elif t == "imported_play":
             s["pd_playcount"] += int(e.get("count") or 0)
@@ -102,9 +99,9 @@ def parse(db, events):
             res = e.get("result")
             s["play"] += 1
             s[{"clear": "finished", "fail": "failed"}.get(res, "quit")] += 1
-            day = str(e.get("at", ""))[:10]  # `at` is UTC (contract 3)
+            day = str(e.get("at", ""))[:10]  # `at` は UTC（契約3）
             if res in ("clear", "fail") and cur in first_clear and day > first_clear[cur]:
-                s["returned"] = 1  # played again on a later day than the first clear (law 4.1)
+                s["returned"] = 1  # 最初のクリアより後の日にまた遊んだ（法 4.1）
             if res == "clear":
                 first_clear.setdefault(cur, day)
             key = chartids.key(cur, e.get("characteristic"), e.get("difficulty"))
