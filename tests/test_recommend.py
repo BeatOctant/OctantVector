@@ -11,6 +11,14 @@ from octantvector.runtime.history import parse
 from octantvector.runtime.skill import estimate
 
 MUSIC, CHART, GENRE = "music_x@1", "chart_x@1", "genre_x@1"
+NO_MEASURED = (None,) * 4  # the measured columns after play_style (dbformat.CHART_COLS)
+
+
+@pytest.fixture(autouse=True)
+def _distance_on_nps_and_njs(monkeypatch):
+    """The synthetic charts here have the catalogue's nps and njs only: measure the skill's distance on those."""
+    from octantvector.common import params
+    monkeypatch.setitem(params.DEFAULTS, "features", {"nps": 1.0, "njs": 1.0})
 N = 40
 
 
@@ -43,10 +51,10 @@ def db(tmp_path):
     for i in range(N):
         h = H(i)
         c["maps"][h] = ("artist", "mapper", 120.0, "2025-01-01")
-        rows = [("Standard", "Hard", 3 + 0.05 * i, 12 + 0.1 * i, None, None, "Standard"),
-                ("Standard", "Expert", 6 + 0.05 * i, 16 + 0.1 * i, None, None, "Standard")]
+        rows = [("Standard", "Hard", 3 + 0.05 * i, 12 + 0.1 * i, None, None, "Standard", *NO_MEASURED),
+                ("Standard", "Expert", 6 + 0.05 * i, 16 + 0.1 * i, None, None, "Standard", *NO_MEASURED)]
         if i % 5 == 0:
-            rows.append(("OneSaber", "Expert", 5 + 0.05 * i, 15, None, None, "OneSaber"))
+            rows.append(("OneSaber", "Expert", 5 + 0.05 * i, 15, None, None, "OneSaber", *NO_MEASURED))
         c["charts"][h] = rows
         side = 0 if i < N // 2 else 1  # two clusters of songs
         if i != 7:  # map 7 has no music vector
@@ -56,7 +64,7 @@ def db(tmp_path):
             chart[f"{h}:{ch}:{d}"] = unit(np.eye(3)[side] + 0.2 * rng.normal(size=3))
     # A map in the catalogue with no vector in any view (the encoders have not reached it yet)
     c["maps"][BARE] = ("artist", "mapper", 120.0, "2025-01-01")
-    c["charts"][BARE] = [("Standard", "Expert", 6.0, 16.0, None, None, "Standard")]
+    c["charts"][BARE] = [("Standard", "Expert", 6.0, 16.0, None, None, "Standard", *NO_MEASURED)]
     c["views"] = {
         MUSIC: {"meta": {"role": "music", "rows": "maps", "dim": 4}, "vecs": music},
         CHART: {"meta": {"role": "chart", "rows": "charts", "dim": 3}, "vecs": chart},
@@ -381,7 +389,7 @@ def test_other_mappers_maps_of_one_song_take_one_place(tmp_path):
         h = H(i)
         song = i < 8  # maps 0..7: one song, eight mappers
         c["maps"][h] = ("artist", f"mapper{i}", 120.0, "2025-01-01")
-        c["charts"][h] = [("Standard", "Expert", 6, 16, None, None, "Standard")]
+        c["charts"][h] = [("Standard", "Expert", 6, 16, None, None, "Standard", *NO_MEASURED)]
         base = np.eye(6)[0] if song else np.eye(6)[0] * 0.6 + np.eye(6)[1] * 0.8
         music[h] = unit(base + (0.02 if song else 0.4) * rng.normal(size=6))
         chart[f"{h}:Standard:Expert"] = unit(rng.normal(size=3))
@@ -470,7 +478,7 @@ def weak_player(path, logit, seed=2):
     nps, njs, music = rng.uniform(3, 9, 300), rng.uniform(10, 22, 300), {}
     for i, a, b in [(i, nps[i], njs[i]) for i in range(300)] + [(300, 5.5, 6.0), (301, 5.5, 26.0)]:
         c["maps"][H(i)] = ("artist", "mapper", 120.0, "2025-01-01")
-        c["charts"][H(i)] = [("Standard", "Expert", float(a), float(b), None, None, "Standard")]
+        c["charts"][H(i)] = [("Standard", "Expert", float(a), float(b), None, None, "Standard", *NO_MEASURED)]
         music[H(i)] = unit(rng.normal(size=4))
     c["views"] = {MUSIC: {"meta": {"role": "music", "rows": "maps", "dim": 4}, "vecs": music}}
     db = open_db(dbformat.write_full(path / "db", c, "2026.10.15", "2026-10-15T00:00:00Z"))
@@ -624,7 +632,7 @@ def ceiling_db(tmp_path, with_metric=True, njs=lambda i: 16.0):
     for i in range(N):
         h = H(i)
         c["maps"][h] = ("artist", "mapper", 120.0, "2025-01-01")
-        row = ("Standard", "Expert", 5.0, njs(i), float(i), None, "Standard")
+        row = ("Standard", "Expert", 5.0, njs(i), float(i), None, "Standard", *NO_MEASURED)
         c["charts"][h] = [row + ((float(N - i),) if with_metric else ())]
         music[h] = unit([1.0, 0.01 * i, 0, 0])
     if with_metric:
@@ -632,6 +640,13 @@ def ceiling_db(tmp_path, with_metric=True, njs=lambda i: 16.0):
         c["extra_cols"]["charts"] = [pa.field("movement", pa.float64())]
     c["views"] = {MUSIC: {"meta": {"role": "music", "rows": "maps", "dim": 4}, "vecs": music}}
     return open_db(dbformat.write_full(tmp_path / "db", c, "2026.10.25", "2026-10-25T00:00:00Z"))
+
+
+def test_each_item_carries_the_measured_nps_of_its_chart(tmp_path):
+    db = ceiling_db(tmp_path)
+    hist = [like(0)] + [play(i, "Expert", at=f"2026-10-{i + 1:02d}T00:00:00Z") for i in range(20)]
+    items = recommend(db, hist, {"count": 3}, {"mapsPerSong": 0, "includeKnown": True})["items"]
+    assert items and all(i["nps"] == 5.0 for i in items)
 
 
 def test_a_metric_column_added_to_the_db_is_read(tmp_path):
@@ -809,7 +824,7 @@ def test_all_ranks_by_the_lowest_percentile_and_drops_maps_missing_an_entry(tmp_
     for i, (a, b) in enumerate(angles):
         h = H(i)
         c["maps"][h] = (f"artist{i}", "mapper", 120.0, "2025-01-01")
-        c["charts"][h] = [("Standard", "Expert", 6, 16, None, None, "Standard")]
+        c["charts"][h] = [("Standard", "Expert", 6, 16, None, None, "Standard", *NO_MEASURED)]
         music[h] = unit([np.cos(a), np.sin(a), 0.01 * rng.normal()])
         if b is not None:
             vocal[h] = unit([np.cos(b), np.sin(b), 0.01 * rng.normal()])
@@ -833,3 +848,43 @@ def test_all_ranks_by_the_lowest_percentile_and_drops_maps_missing_an_entry(tmp_
         recommend(db, [], {"seed": s, "all": [{"music_x": 1}], "count": 3})
     with pytest.raises(RequestError):
         recommend(db, [], {"seed": s, "weights": {"music_x": 1}, "all": [{"music_x": 1}, {"vocal_x": 1}]})
+
+
+def test_revisit_days_returns_only_liked_maps_not_played_lately(db, monkeypatch):
+    """`revisitDays` (Revisit, 2026-11-03): only liked maps whose last play is at least that many days old. Maps never
+    played, liked maps played lately and deleted maps stay out; the known-map exclusion does not apply."""
+    import datetime
+
+    import importlib
+    rec = importlib.import_module("octantvector.runtime.recommend")
+    monkeypatch.setattr(rec, "_today", lambda: datetime.date(2026, 11, 3))
+    ev = [
+        # liked long ago: cleared and favourited in September, not played since
+        play(1, at="2026-09-01T00:00:00Z"), like(1, at="2026-09-01T00:00:00Z"),
+        play(2, at="2026-09-02T00:00:00Z"), like(2, at="2026-09-02T00:00:00Z"),
+        # liked, but played again a few days ago (even a quit counts as a play)
+        play(3, at="2026-09-03T00:00:00Z"), like(3, at="2026-09-03T00:00:00Z"),
+        play(3, result="quit", at="2026-10-30T00:00:00Z"),
+        # liked long ago, then deleted
+        play(4, at="2026-09-04T00:00:00Z"), like(4, at="2026-09-04T00:00:00Z"),
+        {"type": "user_delete", "hash": H(4), "at": "2026-09-10T00:00:00Z"},
+        # played long ago but never liked (one clear only)
+        play(5, at="2026-09-05T00:00:00Z"),
+        # liked from before OctantPath: PlayerData counts only, no play events
+        {"type": "imported_play", "hash": H(6), "characteristic": "Standard", "difficulty": "Hard", "count": 3,
+         "at": "2026-09-01T00:00:00Z"}, like(6, at="2026-09-01T00:00:00Z"),
+    ]
+    out = recommend(db, ev, {"count": N}, {**ONE_SONG_EACH, "revisitDays": 30})
+    assert {it["hash"] for it in out["items"]} == {H(1), H(2), H(6)}
+    # A shorter window lets in the map played four days ago
+    out = recommend(db, ev, {"count": N}, {**ONE_SONG_EACH, "revisitDays": 3})
+    assert H(3) in {it["hash"] for it in out["items"]}
+    # The request's exclusions still apply
+    out = recommend(db, ev, {"count": N, "exclude": [{"hash": H(1), "reason": "x"}]}, {**ONE_SONG_EACH, "revisitDays": 30})
+    assert {it["hash"] for it in out["items"]} == {H(2), H(6)}
+
+
+def test_revisit_days_bounds():
+    from octantvector.common.params import why_invalid
+    assert why_invalid({"revisitDays": 30}) is None
+    assert why_invalid({"revisitDays": -1}) and why_invalid({"revisitDays": 1.5}) and why_invalid({"revisitDays": 4000})

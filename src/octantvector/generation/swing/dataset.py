@@ -115,7 +115,7 @@ def build(cfg, out, min_upvotes, n=None, seed=2, log=sys.stderr):
                     d = by.get(r["diff"], {})
                     ps = d.get("paritySummary") or {}
                     fo.write(json.dumps({"hash": h, **_diff_labels(lab, d, desc), **r, "stars": d.get("stars") or 0, "bl_stars": d.get("blStars") or 0,
-                                         "bs_nps": d.get("nps"), "bs_resets": ps.get("resets"), "bs_errors": ps.get("errors"),
+                                         "bs_resets": ps.get("resets"), "bs_errors": ps.get("errors"),
                                          "bs_warns": ps.get("warns")}) + "\n")
                     nrows += 1
             if k % 500 == 0:

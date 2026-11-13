@@ -5,7 +5,7 @@
 import numpy as np
 
 from ...common import charts
-from ..swing.chart import beatmaps, bpm_of, parse
+from ..swing.chart import beatmaps, bpm_of, bpm_regions, parse, windows
 from .base import Encoder, register
 
 GAPS = (0.126, 0.26, 0.51, 1.01)  # 同じ手の間隔のしきい値（拍。約 1/8、1/4、1/2、1）
@@ -44,7 +44,7 @@ def pattern_features(chart):
             repeats += list((dd[1:] == dd[:-1]) & (dd[1:] != 8))
         cross += list((xx >= 2) if col == 0 else (xx <= 1))  # 赤が右半分 / 青が左半分
     gaps = np.array(gaps) if gaps else np.array([1.0])
-    hist = np.histogram(sec, bins=max(int(span // 4), 1))[0] / 4.0  # 4 秒の窓でのノーツ数/秒
+    hist = np.histogram(sec, bins=windows(span, 4))[0] / 4.0  # 4 秒の窓でのノーツ数/秒
     v = [len(notes) / span, chart.njs, len(bombs) / span, len(walls) / span, sum(w[1] for w in walls) / span,
          chart.arcs / span, chart.chains / span, float(np.mean(c == 0)), double,
          np.mean(d == 8), np.mean(np.isin(d, (0, 1))), np.mean(np.isin(d, (2, 3))), np.mean(np.isin(d, (4, 5, 6, 7))),
@@ -62,7 +62,7 @@ def pattern_features(chart):
 class ChartPatterns(Encoder):
     kind = "zip"
     id = "chart_patterns"
-    version = "3"  # 3: swing/chart.py で読む（BPM の変化、Noodle / Mapping Extensions、触れられない物を外す）
+    version = "4"  # 4: v4 の音声のファイルの BPM の区間をたどる。 3: swing/chart.py で読む（BPM の変化、Noodle / Mapping Extensions、触れられない物を外す）
     rows = "charts"
     inputs = ("chart",)
     names = NAMES
@@ -73,12 +73,12 @@ class ChartPatterns(Encoder):
 
     def embed_zip(self, mz):
         """-> ノーツが足りるすべての譜面の {譜面のキー: 特徴}。"""
-        out, first_error = {}, None
+        out, first_error, regions = {}, None, bpm_regions(mz)
         for c, d, fn, njs in beatmaps(mz.info):
             if self.play_styles and charts.play_style(c) not in self.play_styles:
                 continue
             try:
-                v = pattern_features(parse(mz.json(fn), bpm_of(mz.info), njs))
+                v = pattern_features(parse(mz.json(fn), bpm_of(mz.info), njs, regions))
             except Exception as ex:  # 壊れた譜面が 1 つあっても、ほかは使える
                 first_error = first_error or ex
                 continue

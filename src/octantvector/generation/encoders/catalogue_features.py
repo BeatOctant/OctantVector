@@ -1,33 +1,7 @@
-"""カタログの記録だけから計算するエンコーダー（zip は開かない）: 難易度ごとの NPS/NJS、メタデータとタグ。"""
+"""カタログの記録だけから計算するエンコーダー（zip は開かない）: メタデータとタグ。"""
 import numpy as np
 
-from ...common.charts import DIFF_ORDER
 from .base import Encoder, register
-
-
-@register
-class NpsNjs(Encoder):
-    """Standard の Easy..ExpertPlus の NPS と NJS（ない枠は一番近いある枠を写す）と、あるかどうかの印。
-    譜面の値をマップ単位にまとめた実験用のもの: dbrelease.py は受け付けない（譜面のビューは譜面の行を持つこと。
-    譜面ごとの NPS と NJS は DB の charts の表にある）。"""
-    id = "npsnjs_std"
-    dim = 15
-    role = "chart"  # カタログから読むが、譜面の密度を表す
-    inputs = ("meta:versions.diffs",)
-
-    def params(self):
-        return {"source": "catalogue versions[].diffs", "characteristic": "Standard", "layout": "nps[5], njs[5], present[5]"}
-
-    def embed_map(self, m, v):
-        by = {d["difficulty"]: d for d in v["diffs"] if d["characteristic"] == "Standard"}
-        if not by:
-            return None
-        present = [n in by for n in DIFF_ORDER]
-        nps, njs = [], []
-        for i in range(len(DIFF_ORDER)):
-            j = i if present[i] else min((j for j, p in enumerate(present) if p), key=lambda j: abs(j - i))
-            nps.append(by[DIFF_ORDER[j]]["nps"]); njs.append(by[DIFF_ORDER[j]]["njs"])
-        return np.array(nps + njs + [float(p) for p in present], np.float32)
 
 
 TAGS = ["accuracy", "balanced", "challenge", "dance-style", "fitness", "speed", "tech", "alternative", "ambient",

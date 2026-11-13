@@ -402,7 +402,7 @@ def test_dot_join_window_and_crouch_tunnels():
 # Definitions of the stored swing views. When a change to the features, the [swing] defaults or the default tag
 # rules makes this fail, bump the encoder's version (encoders/swing.py) and update the pair here; bump the
 # derived views too when swing_flow changes, since they are computed from it.
-VIEW_DEFINITIONS = {"swing_flow": ("12", "5f86e4beeeb7708a"), "swing_style": ("13", "d2502ed44a830ec2"),
+VIEW_DEFINITIONS = {"swing_flow": ("13", "5f86e4beeeb7708a"), "swing_style": ("13", "d2502ed44a830ec2"),
                     "swing_hazards": ("10", "26cd5cc7c6d0a052")}
 
 

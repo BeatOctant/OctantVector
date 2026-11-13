@@ -10,6 +10,8 @@ from octantvector.generation import artists
 from octantvector.runtime import open_db, presets, read_info, recommend
 from octantvector.runtime.db import apply_diff
 
+NO_MEASURED = (None,) * 4  # the measured columns after play_style (dbformat.CHART_COLS)
+
 MUSIC, ART = "music_x@1", "listenbrainz_artists@20261012"
 
 
@@ -32,7 +34,7 @@ def content(n=30, members=None, pairs=None, song=()):
     for i in range(n):
         h = H(i)
         c["maps"][h] = ("artist", "mapper", 120.0, "2025-01-01")
-        c["charts"][h] = [("Standard", "Expert", 6, 16, None, None, "Standard")]
+        c["charts"][h] = [("Standard", "Expert", 6, 16, None, None, "Standard", *NO_MEASURED)]
         music[h] = unit(tune + 0.01 * rng.normal(size=8)) if i in song else unit(rng.normal(size=8))
     c["views"] = {MUSIC: {"meta": {"role": "music", "rows": "maps", "dim": 8, "fingerprint": "f1"}, "vecs": music}}
     if members is not None:

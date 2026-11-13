@@ -14,7 +14,7 @@ from octantvector.runtime.db import open_db
 
 from test_ledger import H, NOTES, mapr, version, write_world, write_zip
 
-VIEWS = ["chart_patterns@3", "meta_tags@2"]
+VIEWS = ["chart_patterns@4", "meta_tags@2"]
 PARAMS = {"workers": 1, "device": "cpu", "pools": {"distribution": {"min_upvotes": 0}}}
 AT = datetime(2026, 10, 2, tzinfo=timezone.utc)
 
@@ -44,8 +44,9 @@ def harvest(tmp_path, monkeypatch):
 def test_compute_is_resumable_and_reads_only_its_arguments(harvest):
     tmp_path, crawl, store, _ = harvest
     got = gen.compute(crawl, store, VIEWS, PARAMS)
-    # swing_flow too, though not named: a release fills Pass and Tech from it
-    assert got["computed"] == 72 and got["failed"] == 0 and set(got["views"]) == set(VIEWS) | {"swing_flow@12"}
+    # swing_flow and chart_timing too, though not named: a release fills the charts' metrics from them
+    assert got["computed"] == 96 and got["failed"] == 0
+    assert set(got["views"]) == set(VIEWS) | {"swing_flow@13", "chart_timing@3"}
     assert (store / "ledger.sqlite").exists() and not (tmp_path / "store").exists()
     assert gen.compute(crawl, store, VIEWS, PARAMS) == {"computed": 0, "failed": 0, "skipped": 0, "deferred": 0,
                                                          "views": {}}
@@ -56,20 +57,21 @@ def test_compute_reports_the_maps_the_gpu_had_no_room_for_and_the_next_call_comp
     _, crawl, store, _ = harvest
     run_heavy = embed._run_heavy
     monkeypatch.setattr(embed, "_run_heavy", lambda *a: {"chart_patterns": 24})  # as if none fitted: nothing recorded
-    # (swing_flow, also a zip view, is left uncomputed by the stand-in too)
+    # (swing_flow and chart_timing, also zip views, are left uncomputed by the stand-in too)
     got = gen.compute(crawl, store, VIEWS, PARAMS)
-    assert got["deferred"] == 24 and got["views"]["chart_patterns@3"] == {"deferred": 24} and got["computed"] == 24
+    assert got["deferred"] == 24 and got["views"]["chart_patterns@4"] == {"deferred": 24} and got["computed"] == 24
     monkeypatch.setattr(embed, "_run_heavy", run_heavy)
     got = gen.compute(crawl, store, VIEWS, PARAMS)
-    assert got["computed"] == 48 and got["deferred"] == 0 and set(got["views"]) == {"chart_patterns@3", "swing_flow@12"}
+    assert got["computed"] == 72 and got["deferred"] == 0
+    assert set(got["views"]) == {"chart_patterns@4", "swing_flow@13", "chart_timing@3"}
 
 
 def test_compute_covers_the_named_pool(harvest):
     _, crawl, store, _ = harvest
     params = {**PARAMS, "pools": {"few": {"sample": 5, "seed": 1}}}
-    assert gen.compute(crawl, store, VIEWS, params, pool="few")["computed"] == 15
+    assert gen.compute(crawl, store, VIEWS, params, pool="few")["computed"] == 20
     assert gen.compute(crawl, store, VIEWS, params, pool="few")["computed"] == 0
-    assert gen.compute(crawl, store, VIEWS, params)["computed"] == 57  # distribution: only the rest is computed
+    assert gen.compute(crawl, store, VIEWS, params)["computed"] == 76  # distribution: only the rest is computed
 
 
 def test_bad_arguments_are_refused(harvest):
@@ -78,7 +80,7 @@ def test_bad_arguments_are_refused(harvest):
         gen.compute(crawl, store, VIEWS, {**PARAMS, "wrokers": 2})
     with pytest.raises(GenerationError, match="pass paths"):
         gen.compute(crawl, store, VIEWS, {**PARAMS, "store": "elsewhere"})
-    with pytest.raises(GenerationError, match="computes chart_patterns@3"):
+    with pytest.raises(GenerationError, match="computes chart_patterns@4"):
         gen.compute(crawl, store, ["chart_patterns@1"], PARAMS)
     for views in (None, [], "meta_tags@2"):  # views are always named
         with pytest.raises(GenerationError, match="views"):

@@ -39,10 +39,9 @@ def load_meta(catalogue: Path, cache: Path) -> dict:
     for m in read_jsonl(catalogue):
         md = m["metadata"]
         for v in m["versions"]:
-            std = standard_diffs(v)
             out[v["hash"]] = {"key": m["id"], "song": md["songName"], "artist": md["songAuthorName"],
                               "mapper": md["levelAuthorName"], "bpm": md["bpm"], "up": m["stats"]["upvotes"],
-                              "tags": m.get("tags", []), "maxnps": max((d["nps"] for d in std), default=None)}
+                              "tags": m.get("tags", [])}
     cache.parent.mkdir(parents=True, exist_ok=True)
     cache.write_text(json.dumps(out, ensure_ascii=False))
     return out

@@ -17,7 +17,8 @@ OctantVector の知らないものを持たず（差分ではそれを失う: db
 （calibration.extend）。ファイルの形式は dbformat.py。
 
 charts.parquet の Pass と Tech は、`swing_flow` がビューの 1 つかによらず、スイングのシミュレーション（`swing_flow`、
-METRICS）の保存した値。値の保存されていない譜面（別のプレイスタイル、ノーツが少なすぎるか多すぎる、zip に失敗した）
+METRICS）の保存した値。njs は BeatSaver のカタログに書かれたまま残し、NPS とその山、遊ぶときの NJS、ジャンプ距離、
+反応時間は譜面のファイルから測った `chart_timing`（METRICS）の保存した値（カタログの nps は使わない: 負になる譜面がある）。値の保存されていない譜面（別のプレイスタイル、ノーツが少なすぎるか多すぎる、zip に失敗した）
 は空のままにし、manifest.chartMetrics に各列を埋めたビューを書く。版には、承認されたときに後から署名する（api.sign）。
 """
 import json
@@ -37,7 +38,8 @@ from .store import Store
 
 
 # charts.parquet の指標の列と、各列を同じ名前の保存した（正規化しない）特徴で埋めるビュー
-METRICS = {"pass": "swing_flow", "tech": "swing_flow"}
+MEASURED = ("nps", "njs_play", "jd", "reaction_s", "nps_peak")  # 譜面のファイルから測る列（encoders/chart_timing.py）
+METRICS = {"pass": "swing_flow", "tech": "swing_flow", **{m: "chart_timing" for m in MEASURED}}
 
 
 def metric_views():
@@ -66,9 +68,7 @@ def build(cfg, view_ids, calibration, log=sys.stderr, relations=()):
         md = m.get("metadata", {})  # 曲名は入れない: 特徴にしないため
         c["maps"][h] = (md.get("songAuthorName"), md.get("levelAuthorName"), _num(md.get("duration")),
                         v.get("createdAt") or m.get("uploaded"))
-        c["charts"][h] = [(d.get("characteristic"), d.get("difficulty"), _num(d.get("nps")),
-                           _num(d.get("njs")), None, None, charts.play_style(d.get("characteristic")))
-                          for d in v.get("diffs", [])]
+        c["charts"][h] = [_chart_row(d) for d in v.get("diffs", [])]
     c["chart_metrics"] = _metrics(cfg, c["charts"], log)
     current_of_key = {recs[h][0]["id"]: h for h in hashes}
     c["superseded"] = {h: current_of_key[k] for h, k in old if k in current_of_key}
@@ -115,10 +115,18 @@ def build(cfg, view_ids, calibration, log=sys.stderr, relations=()):
     return c
 
 
+def _chart_row(d):
+    """カタログの難易度 1 つ -> 譜面の行（dbformat.CHART_COLS の順）。カタログから入れるのは名前、njs、play_style だけ。
+    測る列（MEASURED、nps を含む）とスイングの列は、あとで _metrics が埋める。"""
+    known = {"characteristic": d.get("characteristic"), "difficulty": d.get("difficulty"), "njs": _num(d.get("njs")),
+             "play_style": charts.play_style(d.get("characteristic"))}
+    return tuple(known.get(c) for c, _ in dbformat.CHART_COLS)
+
+
 def _metrics(cfg, rows, log):
     """譜面の行 {hash: [row]} の METRICS の列を、保存したビューからその場で埋める。
     -> manifest.chartMetrics: {列: それを埋めたビューの id@version}。"""
-    cols = {"pass": 4, "tech": 5}  # 譜面の行の中の位置（dbformat.py）
+    cols = {c: n for n, (c, _) in enumerate(dbformat.CHART_COLS)}  # 譜面の行の中の位置
     filled = {}
     for i in metric_views():
         e = get(i)
@@ -138,13 +146,28 @@ def _metrics(cfg, rows, log):
                     continue
                 r = list(r)
                 for m, x in zip(names, v):
-                    r[cols[m]] = float(x)
+                    # 有限でない値（色ノーツのない譜面の nps）は空にする。NaN は NaN と等しくないので、残すと差分で
+                    # その譜面が毎回「変わった」になる。読む側は空と NaN を同じに扱う
+                    r[cols[m]] = float(x) if np.isfinite(x) else None
                 rs[j] = tuple(r)
                 n += 1
         print(f"{key}: {', '.join(names)} of {n} of {sum(len(rs) for rs in rows.values())} charts", file=log)
         if n:
             filled.update({m: key for m in names})
     return filled
+
+
+def chart_metric(store, name):
+    """譜面の指標の列 `name`（METRICS）を、それを測る保存したビューから -> (ビューの id@version,
+    {譜面のキー（カタログの書き方）: 値})。有限でない値（色ノーツのない譜面の nps など）は入れない。ビューを
+    計算していなければ GenerationError。"""
+    e = get(METRICS[name])
+    key = f"{e.id}@{e.version}"
+    if not (Path(store) / key).exists():
+        raise GenerationError(f"{key} is not computed in {store}; run `octantvector update {e.id}` first")
+    hs, X = Store(e, store).load()
+    col = X[:, e.names.index(name)].astype(np.float64)
+    return key, {charts.catalogue_spelling(k): float(v) for k, v in zip(hs, col) if np.isfinite(v)}
 
 
 def latest(root):

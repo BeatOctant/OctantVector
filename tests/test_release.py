@@ -17,11 +17,11 @@ from octantvector.generation.ledger import Ledger
 from octantvector.generation.search import Index
 from octantvector.generation.store import Store
 
-from test_ledger import H, NOTES, mapr, update, version, write_world, write_zip, cfg  # noqa: F401
+from test_ledger import H, NOTES, _PerMap, mapr, update, version, write_world, write_zip, cfg  # noqa: F401
 from datetime import timedelta
 
 VIEWS = ["chart_patterns", "meta_tags"]
-CP, MT = "chart_patterns@3", "meta_tags@2"
+CP, MT = "chart_patterns@4", "meta_tags@2"
 
 
 def ck(h, characteristic="Standard", difficulty="Expert"):
@@ -152,7 +152,7 @@ def next_day(tmp_path, cfg, days=1, **kw):
 def change_world(tmp_path):
     maps = test_world.maps
     maps[1]["tags"] = ["jazz"]  # a changed vector (meta_tags)
-    maps[2]["versions"][0]["diffs"][0]["nps"] = 99.0  # a changed chart row
+    maps[2]["versions"][0]["diffs"][0]["njs"] = 99.0  # a changed chart row
     maps[3]["versions"] = [dict(maps[3]["versions"][0], state="Uploaded"), version(H(40))]  # k4 got a new version
     maps[3]["versions"][1]["createdAt"] = "2026-10-03T00:00:00Z"
     del maps[9]  # k10 deleted; k31 is new
@@ -302,37 +302,39 @@ def test_a_new_normalisation_is_published_as_a_full(world, cfg, monkeypatch):
 
 def test_view_packs_add_replace_and_remove_views(world, cfg, monkeypatch):
     tmp_path, cal, pool, base = world
-    # swing_flow is named: added with all its chart rows; chart_patterns@3 goes to version 4; meta_tags is not named
+    # swing_flow is named: added with all its chart rows; chart_patterns@4 goes to version 4; meta_tags is not named
     from octantvector.generation.encoders import REGISTRY
     update(cfg, ["swing_flow"])  # before `first`, so both carry the same Pass and Tech
     first, _ = dbrelease.release(config.load(), VIEWS, cal, built_at=AT + timedelta(days=1), log=io.StringIO(), full=True)
-    monkeypatch.setattr(REGISTRY["chart_patterns"], "version", "4")
+    monkeypatch.setattr(REGISTRY["chart_patterns"], "version", "5")
     update(cfg, ["swing_flow", "chart_patterns"])  # version 4 computes everything again
     new, diff = next_day(tmp_path, cfg, 2, view_ids=["swing_flow", "chart_patterns"])
     dm = json.loads((diff / "manifest.json").read_text())
-    assert set(dm["views"]) == {"swing_flow@12", "chart_patterns@4"} and dm["removedViews"] == [MT]
-    assert dm["views"]["swing_flow@12"]["change"] == "added" and "replaces" not in dm["views"]["swing_flow@12"]
-    assert dm["views"]["swing_flow@12"]["rows"] == "charts"
-    assert dm["views"]["chart_patterns@4"]["replaces"] == CP
+    assert set(dm["views"]) == {"swing_flow@13", "chart_patterns@5"} and dm["removedViews"] == [MT]
+    assert dm["views"]["swing_flow@13"]["change"] == "added" and "replaces" not in dm["views"]["swing_flow@13"]
+    assert dm["views"]["swing_flow@13"]["rows"] == "charts"
+    assert dm["views"]["chart_patterns@5"]["replaces"] == CP
     assert dm["counts"]["added"] == dm["counts"]["replaced"] == 0  # no map changed
     new_cal = json.loads((diff / dm["calibrationFile"]).read_text())
-    assert new_cal["extends"] == cal["id"] and set(new_cal["views"]) >= {"swing_flow@12", "chart_patterns@4"}
+    assert new_cal["extends"] == cal["id"] and set(new_cal["views"]) >= {"swing_flow@13", "chart_patterns@5"}
     assert new_cal["views"][MT] == json.loads(
         (first / json.loads((first / "manifest.json").read_text())["calibrationFile"]).read_text())["views"][MT]
 
     applied = apply_diff(first, diff, tmp_path / "host" / dm["dbVersion"])
     same_content(dbformat.read_content(applied), dbformat.read_content(new))
-    got = dbformat.read_content(applied)["views"]["swing_flow@12"]["vecs"]
+    got = dbformat.read_content(applied)["views"]["swing_flow@13"]["vecs"]
     stored = {k for k in Store(get("swing_flow"), tmp_path / "store").done() if k.split(":")[0] in set(pool)}
     assert got.keys() == stored and got  # the added view has all its chart rows
 
 
-def test_a_chart_view_describing_maps_is_refused(world, cfg):
+def test_a_chart_view_describing_maps_is_refused(world, cfg, monkeypatch):
+    from octantvector.generation.encoders import REGISTRY
+    monkeypatch.setitem(REGISTRY, _PerMap.id, _PerMap)
     tmp_path, cal, pool, base = world
-    update(cfg, ["npsnjs_std"])
-    cal2 = calibration.compute(tmp_path / "store", ["npsnjs_std"], pool, "distribution")
+    update(cfg, [_PerMap.id])
+    cal2 = calibration.compute(tmp_path / "store", [_PerMap.id], pool, "distribution")
     with pytest.raises(GenerationError, match="principle 2"):
-        dbrelease.release(config.load(), ["npsnjs_std"], cal2, built_at=AT + timedelta(days=1), log=io.StringIO())
+        dbrelease.release(config.load(), [_PerMap.id], cal2, built_at=AT + timedelta(days=1), log=io.StringIO())
 
 
 def test_chart_views_compare_charts_of_one_play_style_only(tmp_path, cfg, monkeypatch):
@@ -376,7 +378,7 @@ def test_a_charts_table_without_play_style_is_refused(world):
     _, _, _, out = world
     t = pq.read_table(out / "charts.parquet")
     pq.write_table(t.drop(["play_style"]), out / "charts.parquet")
-    with pytest.raises(DBError, match="no column play_style"):
+    with pytest.raises(DBError, match="no column play_style .*before OctantVector 0.14.0"):
         dbformat.read_charts(out / "charts.parquet")
 
 
@@ -419,11 +421,13 @@ def test_pass_and_tech_come_from_the_stored_swing_simulation(world, cfg):
     stay empty, and chartMetrics names the view."""
     tmp_path, cal, pool, base = world
     assert json.loads((base / "manifest.json").read_text())["chartMetrics"] == {}  # swing_flow not computed: empty
+    # the catalogue's nps is not used (BeatSaver's is negative for some charts): empty until chart_timing measures it
+    assert set(pq.read_table(base / "charts.parquet").to_pydict()["nps"]) == {None}
     update(cfg, ["swing_flow"])
     log = io.StringIO()
     out, diff = dbrelease.release(config.load(), VIEWS, cal, built_at=AT + timedelta(days=1), log=log)
     m = json.loads((out / "manifest.json").read_text())
-    assert m["chartMetrics"] == {"pass": "swing_flow@12", "tech": "swing_flow@12"} and "swing_flow@12" not in m["views"]
+    assert m["chartMetrics"] == {"pass": "swing_flow@13", "tech": "swing_flow@13"} and "swing_flow@13" not in m["views"]
     e = get("swing_flow")
     hs, X = Store(e, tmp_path / "store").load()
     stored = {k: X[n] for n, k in enumerate(hs)}
@@ -547,3 +551,30 @@ def test_a_genre_view_lists_its_words_and_a_hand_can_curate_them(world, cfg, tmp
     from octantvector.runtime import presets
     listed = presets(open_db(new))["presets"]
     assert [o["label"] for o in listed[0]["inputs"][0]["options"]] == ["ロック", "メタル"]  # 演歌 is not a word here
+
+
+def test_a_chart_row_follows_the_column_names():
+    from octantvector.common import dbformat
+    from octantvector.common import charts
+    from octantvector.generation.dbrelease import _chart_row
+    row = dict(zip((c for c, _ in dbformat.CHART_COLS),
+                   _chart_row({"characteristic": "Standard", "difficulty": "Expert", "nps": -5.5, "njs": 18})))
+    assert len(row) == len(dbformat.CHART_COLS)
+    assert row["characteristic"] == "Standard" and row["difficulty"] == "Expert" and row["njs"] == 18
+    assert row["play_style"] == charts.play_style("Standard")
+    assert all(row[c] is None for c in row if c not in ("characteristic", "difficulty", "njs", "play_style"))
+
+
+def test_a_chart_without_colour_notes_does_not_change_in_every_diff(world, cfg, monkeypatch):
+    """Its measured nps is NaN, and NaN is not equal to NaN: written as such, the chart would ride every diff as
+    changed. It is written empty, which a reader takes as no value, the same as NaN."""
+    from octantvector.generation.encoders import chart_timing
+    real = chart_timing.timing
+    monkeypatch.setattr(chart_timing, "timing", lambda *a: np.r_[real(*a)[:3], np.nan, np.nan])
+    tmp_path, cal, pool, base = world
+    update(cfg, ["chart_timing"])
+    first, _ = dbrelease.release(config.load(), VIEWS, cal, built_at=AT + timedelta(days=1), log=io.StringIO())
+    t = pq.read_table(first / "charts.parquet").to_pydict()
+    assert set(t["nps"]) == {None} and any(j is not None for j in t["jd"])
+    _, diff = dbrelease.release(config.load(), VIEWS, cal, built_at=AT + timedelta(days=2), log=io.StringIO())
+    assert json.loads((diff / "manifest.json").read_text())["counts"]["replaced"] == 0

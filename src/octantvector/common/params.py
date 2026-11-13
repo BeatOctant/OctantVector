@@ -7,6 +7,8 @@ params のスキーマの `x-defaultIn`）を使う。「仮」と書いたも�
 DEFAULTS = {
     "minViewWeight": 0.5,          # 候補がベクトルを持つべきビューの重みの割合（OctantSpecs 法 3.1）
     "includeKnown": False,         # 仮: プレイヤーがもう遊んだ、お気に入りにした、投票したマップも推薦する
+    "revisitDays": 0,              # 0 より大きければ、好意のマップのうち最後のプレイがこの日数より前のものだけを出す
+                                   # （「久しぶり」。2026-11-03）。0: 使わない
     "recentPlays": 200,            # 仮: ジャンルの入口で「最近」と数えるプレイの数
     "genreTopShare": 0.1,          # 仮: ジャンルの絞り込みで残す、語に一番近いマップの割合
     "narrowTopMaps": 300,          # 仮: `weights` で並べる前に `narrow` で残すマップ数
@@ -20,7 +22,9 @@ DEFAULTS = {
     "mixPriorDrafts": 20,          # 仮: ミックスの手札で、手札ごとの残した率を、手札に共通の率へ縮める重み（下見の数）
                                    # （1 人の下見での前向きの試しで、20 から 50 が一番損が少なかった）
     # 難易度
-    "features": {"nps": 1.0, "njs": 1.0},  # 距離に使う譜面の特徴と、その重み
+    "features": {"nps": 1.0, "jd": 1.0},  # 距離に使う譜面の特徴と、その重み。譜面のファイルから測った NPS と
+                                   # ジャンプ距離（chart_timing）: 開発用の記録で後の失敗を一番よく分け（距離の AUC
+                                   # 0.70 -> 0.78）、どのプレイスタイルにも値がある（pass は Standard だけ）
     "k": 5,                        # 距離として平均する、一番近い得意な譜面の数
     "normalPercentile": 80,        # クリアした譜面の距離のうち、この百分位までを「普通」とする
     "strongRecentClears": 200,     # 得意な譜面の枠になる、直近のクリアの数
@@ -28,7 +32,7 @@ DEFAULTS = {
     "minFailsForCurve": 30,        # 失敗がこれより少なければクリアの見込みの曲線を作らない。得意な譜面の一番古いクリア以降の
                                    # 失敗がこれより少なければ苦手な方向を作らない
     "directionShrinkPlays": 100,   # 仮: 学習した苦手な方向の重みと設定の重みが半々になる、プレイ（クリアと失敗）の数
-    "toleranceSd": 1.0,            # 目標から許す距離。クリアした距離の標準偏差を単位にする
+    "toleranceSd": 1.0,            # 目標から許す距離。得意な譜面どうしの距離の広がり（四分位範囲 / 1.349、skill.spread）を単位にする
     "toleranceMaxSd": 2.0,         # 候補が少なすぎるとき、ここまで広げる
     "penaltyWeight": 1.0,          # 目標からの距離の罰の重み（`beta`）
     "challengeClearChance": 0.5,   # 挑戦の狙いが目指すクリアの見込み
@@ -55,6 +59,7 @@ AIMS = ("normal", "challenge", "warmup")
 # 小数を許さない。300.0 は通る。
 BOUNDS = {
     "minViewWeight": (0, 1, False),
+    "revisitDays": (0, 3650, True),
     "recentPlays": (0, 10**6, True),
     "genreTopShare": (0, 1, False),
     "narrowTopMaps": (1, 10**7, True),

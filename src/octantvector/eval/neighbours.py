@@ -1,5 +1,5 @@
-"""カタログだけで測る近所の質（個人のデータは使わない）: k-NN の対が、タグ、アーティスト、曲、譜面の作者、
-最大 NPS、BPM でどれだけ一致するかを無作為の対と比べ、k-NN のグラフのハブの偏りも測る。
+"""カタログと譜面のファイルで測る近所の質（個人のデータは使わない）: k-NN の対が、タグ、アーティスト、曲、譜面の作者、
+最大 NPS（譜面のファイルから測った値）、BPM でどれだけ一致するかを無作為の対と比べ、k-NN のグラフのハブの偏りも測る。
 
 一部の曲にだけある弱さが平均に隠れないよう、同じ一致をクエリのグループごとにも出す: Upvote（カタログから。評価
 だけに使い、特徴にはしない）と、孤立の度合い（1 つの基準のビューでのクエリの k 近傍の平均の点）で分ける。孤立した
@@ -20,8 +20,8 @@ def _norm(s):
 
 
 def pair_metrics(pairs, meta):
-    """pairs: [(hash_a, hash_b)]。meta: catalogue.load_meta の出力。カタログにもうないマップを含む対（ストアは削除された
-    版のベクトルも持つ）は外す。"""
+    """pairs: [(hash_a, hash_b)]。meta: catalogue.load_meta の出力に、Standard の譜面の測った NPS の最大 `maxnps`
+    （なければ None）を足したもの。カタログにもうないマップを含む対（ストアは削除された版のベクトルも持つ）は外す。"""
     pairs = [(x, y) for x, y in pairs if x in meta and y in meta]
     a = [meta[x] for x, _ in pairs]; b = [meta[y] for _, y in pairs]
     ga = [set(m["tags"]) & GENRE_TAGS for m in a]; gb = [set(m["tags"]) & GENRE_TAGS for m in b]
@@ -29,11 +29,11 @@ def pair_metrics(pairs, meta):
     art = [_norm(p["artist"]) == _norm(q["artist"]) for p, q in zip(a, b) if _norm(p["artist"])]
     song = [_norm(p["artist"]) == _norm(q["artist"]) and _norm(p["song"].split("(")[0]) == _norm(q["song"].split("(")[0])
             for p, q in zip(a, b) if _norm(p["song"])]
-    nps = [abs(p["maxnps"] - q["maxnps"]) for p, q in zip(a, b) if p["maxnps"] is not None and q["maxnps"] is not None]
+    nps = [abs(p["maxnps"] - q["maxnps"]) for p, q in zip(a, b) if p.get("maxnps") is not None and q.get("maxnps") is not None]
     return {"tag_jaccard": float(np.mean(jac)) if jac else float("nan"),
             "same_artist_pct": 100 * float(np.mean(art)), "same_song_pct": 100 * float(np.mean(song)),
             "same_mapper_pct": 100 * float(np.mean([p["mapper"] == q["mapper"] for p, q in zip(a, b)])),
-            "max_nps_gap": float(np.mean(nps)), "bpm_gap": float(np.mean([abs(p["bpm"] - q["bpm"]) for p, q in zip(a, b)]))}
+            "max_nps_gap": float(np.mean(nps)) if nps else float("nan"), "bpm_gap": float(np.mean([abs(p["bpm"] - q["bpm"]) for p, q in zip(a, b)]))}
 
 
 def hubness(idx, n):

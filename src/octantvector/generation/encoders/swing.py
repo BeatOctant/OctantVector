@@ -16,7 +16,7 @@ class SwingFlow(Encoder):
     ベクトルを持たない。ノーツが `max_notes` を超える譜面も持たない: 50 万ノーツの譜面のシミュレーションは終わらない。"""
     kind = "zip"
     id = "swing_flow"
-    version = "12"
+    version = "13"  # 13: v4 の音声のファイルの BPM の区間をたどる
     max_notes = 50000
     rows = "charts"
     play_styles = ("Standard",)

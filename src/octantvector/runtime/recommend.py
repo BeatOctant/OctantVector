@@ -24,6 +24,8 @@ recommend(db, history, request, params) は 1 人のプレイヤーのために�
   4. 難易度（skill.py）: プレイヤーのクリアが十分にあるプレイスタイルでは、狙いの目標の距離から許容幅より遠い譜面を
      外し（残りが少なすぎれば最大まで広げる）、残りに目標からの距離につれて大きくなる罰を付ける。クリアの足りない
      プレイスタイルは絞らない。
+     `revisitDays` が 0 より大きければ、候補を好意のマップのうち最後のプレイがその日数より前のもの（history.revisit）
+     だけにし、既知の除外は当てない（「久しぶり」）。
      プレイヤーがもう知っているマップは、`includeKnown` でなければ外す。挑戦の狙いでは、目標（法 4.1）を実力の
      あるプレイスタイルでだけ残すので、実力が追いつけば目標がまた出てくる。
      `ceiling`（プレイヤーが入れる）があれば、`ceilingFeatures` のどれかでプレイヤーの上限を超える譜面と、
@@ -337,6 +339,12 @@ def _genre_maps(db, word, share):
     return {db.hashes[int(rows[n])] for n in top}
 
 
+def _today():
+    """「久しぶり」の日数を数える今日（UTC の日付。プレイの `at` は UTC、契約3）。試験で差し替える。"""
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).date()
+
+
 def recommend(db, history, request, params=None):
     why = why_invalid(params)
     if why:  # 暴走し得る値（際限のない許容幅の広げ）や numpy を壊す値はここで止める
@@ -352,9 +360,12 @@ def recommend(db, history, request, params=None):
     weights, ignored = _weights(db, wanted)
     default = _weights(db, None)[0]
     ex_maps, ex_charts = _exclusions(db, request.get("exclude"))
+    # 「久しぶり」（revisitDays）: 候補を、好意のマップのうち最近遊んでいないものだけにする。どれも既知のマップなので、
+    # 既知の除外は当てない（削除したマップは hist.revisit が外す）
+    revisit = hist.revisit(int(p["revisitDays"]), _today()) if int(p["revisitDays"]) > 0 else None
     # 目標（法 4.1）は挑戦の狙いの候補に残す。実力が追いついたら戻ってくるように
     goals = hist.goals() if request.get("difficulty") == "challenge" and not p["includeKnown"] else set()
-    if not p["includeKnown"]:
+    if not p["includeKnown"] and revisit is None:
         ex_maps |= hist.known() - goals
     allowed_maps = None
 
@@ -431,6 +442,8 @@ def recommend(db, history, request, params=None):
     cand[sorted(ex_charts)] = False
     if allowed_maps is not None:
         cand &= _map_mask(db, allowed_maps)[chart_map]
+    if revisit is not None:
+        cand &= _map_mask(db, revisit)[chart_map]
     if request.get("seed") is not None:  # 起点のプレイスタイルだけ: マップのビューはマップのどの譜面にも同じ値を与える
         cand &= db.play_style_array() == db.play_styles[seed_row]
     in_narrow = None
@@ -734,7 +747,7 @@ def _pick(db, cand, skilled, z, score, tol, count, per_map, songs, prior=()):
 def _result(db, picked, replaced, aims, hist, ignored, word=None):
     """aims: {プレイスタイル: 使った狙い}。そこにないプレイスタイルは難易度で絞らなかった（クリアが少なすぎる）。
     word: 一覧を絞ったジャンルの語（頼まれたか、`genreFrom` が選んだ）。どの項目の理由にも示す。"""
-    items = []
+    items, nps = [], db.chart_metrics.get("nps")
     for rank, (c, h, parts, diff) in enumerate(picked, 1):
         _, ch, d = chartids.split(db.chart_keys[c])
         reason = {"views": {v: round(s, 6) for v, s in parts.items()}, "difficulty": None}
@@ -746,7 +759,8 @@ def _result(db, picked, replaced, aims, hist, ignored, word=None):
                                     "target": round(diff["target"], 6),
                                     "clearChance": None if diff["clearChance"] is None else round(diff["clearChance"], 4),
                                     "nearestStrong": {"hash": nh, "characteristic": nc, "difficulty": nd}}
-        items.append({"hash": h, "characteristic": ch, "difficulty": d, "rank": rank, "reason": reason})
+        v = None if nps is None or not np.isfinite(nps[c]) else round(float(nps[c]), 4)
+        items.append({"hash": h, "characteristic": ch, "difficulty": d, "rank": rank, "nps": v, "reason": reason})
     return {"dbVersion": db.version, "items": items, "aims": aims, "replaced": replaced, "ignoredWeights": ignored,
             "unknownEvents": hist.unknown}
 

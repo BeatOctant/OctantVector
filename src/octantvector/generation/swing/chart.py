@@ -2,8 +2,9 @@
 -> 時刻付きの物。スイングのシミュレーションとパターンの統計（encoders/chart_patterns.py）で使う。
 
 時刻は譜面の BPM の変化をたどって秒にする（v2 の `_events` の type 100、v3 の `bpmEvents`。v2 の `_BPMChanges` は
-エディターのデータなので無視する）。v4 は BPM の変化を別の音声のファイルに持つので、v4 の譜面は通して Info.dat
-の BPM を使う。Noodle Extensions のノーツと爆弾の配置（`coordinates` / `_position`）を使う。Mapping Extensions の
+エディターのデータなので無視する）。v4 は BPM の変化を音声のファイル（Info.dat の `audio.audioDataFilename`、
+`bpmData` の区間）に持つので、それをたどる（bpm_regions）。区間の外の拍は、最初か最後の区間の BPM を延ばして秒にする
+（BeatSaver の NPS の計算は区間の外の拍を 0 秒にするので、最後のノーツが最後の区間の終わりにあると NPS が負になる）。Noodle Extensions のノーツと爆弾の配置（`coordinates` / `_position`）を使う。Mapping Extensions の
 精密な位置（|x| >= 1000）、壁の大きさ（>= 1000）、角度（切る向き 1000..1360）は、マスの単位と度に戻す。
 Noodle Extensions の偽の壁と爆弾は残して印を付け（プレイヤーが触れない背景）、偽の色ノーツは外す。
 """
@@ -14,15 +15,61 @@ from ...common.charts import difficulty_rank
 DIR_DEG = {0: 90.0, 1: 270.0, 2: 180.0, 3: 0.0, 4: 135.0, 5: 45.0, 6: 225.0, 7: 315.0}  # 8 = ドット（None）
 
 
+RANK_DIFFICULTY = {1: "Easy", 3: "Normal", 5: "Hard", 7: "Expert", 9: "ExpertPlus"}
+
+
+def _characteristic(c):
+    """BeatSaver のカタログの書き方（"One Saber" -> "OneSaber"）。"""
+    return c.replace(" ", "") if isinstance(c, str) else c
+
+
+def _v2_names(diffs):
+    """v2 の 1 つの set の譜面の難易度の名前（diffs の順。外す譜面は None）。
+    - 同じ譜面の行が 2 回ある（`_difficulty`・`_difficultyRank`・`_beatmapFilename` が同じ）ときは、最初の 1 行だけを使う
+      （カタログには 1 譜面として並ぶ。公式の DB で 40 マップ、2026-11-12）。
+    - 名前は `_difficultyRank` から（Info.dat に "Expert"、rank 9 と書いた譜面をカタログは ExpertPlus とする）。rank から
+      付けた名前が set の中で重なる譜面は、`_difficulty` の名前のまま（重なると、ある譜面の値が黙って別の譜面のキーに入る）。
+    - それでも名前が重なる譜面（違うファイルが同じ名前を持つ）は、どれがカタログのどの譜面か決められないので None（同じ
+      set のほかの譜面は残す）。"""
+    seen, rows = set(), []
+    for d in diffs:
+        k = (d["_difficulty"], d.get("_difficultyRank"), d["_beatmapFilename"])
+        rows.append(None if k in seen else d)
+        seen.add(k)
+    live = [d for d in rows if d is not None]
+    by_rank = {id(d): RANK_DIFFICULTY.get(d.get("_difficultyRank"), d["_difficulty"]) for d in live}
+    ranked = list(by_rank.values())
+    names = {i: n if ranked.count(n) == 1 else d["_difficulty"] for d in live for i, n in [(id(d), by_rank[id(d)])]}
+    final = list(names.values())
+    return [None if d is None or final.count(names[id(d)]) > 1 else names[id(d)] for d in rows]
+
+
 def beatmaps(info):
-    """Info.dat（v2 か v4）にあるすべての譜面の [(characteristic, difficulty, filename, njs)]。"""
+    """Info.dat（v2 か v4）にあるすべての譜面の [(characteristic, difficulty, filename, njs)]。名前は BeatSaver の
+    カタログに合わせる: v2 の難易度は _v2_names（名前の決まらない譜面は入れない）、characteristic は空白を詰める。"""
     out = []
     for s in info.get("_difficultyBeatmapSets", []):
-        c = s.get("_beatmapCharacteristicName")
-        out += [(c, d["_difficulty"], d["_beatmapFilename"], d.get("_noteJumpMovementSpeed", 0))
-                for d in s["_difficultyBeatmaps"]]
+        c = _characteristic(s.get("_beatmapCharacteristicName"))
+        diffs = s["_difficultyBeatmaps"]
+        out += [(c, n, d["_beatmapFilename"], d.get("_noteJumpMovementSpeed", 0))
+                for n, d in zip(_v2_names(diffs), diffs) if n is not None]
     for d in info.get("difficultyBeatmaps", []):
-        out.append((d.get("characteristic"), d["difficulty"], d["beatmapDataFilename"], d.get("noteJumpMovementSpeed", 0)))
+        out.append((_characteristic(d.get("characteristic")), d["difficulty"], d["beatmapDataFilename"],
+                    d.get("noteJumpMovementSpeed", 0)))
+    return out
+
+
+def jump_offsets(info):
+    """Info.dat（v2 か v4）にあるすべての譜面の {(characteristic, difficulty): ジャンプの開始オフセット（拍）}。"""
+    out = {}
+    for s in info.get("_difficultyBeatmapSets", []):
+        c = _characteristic(s.get("_beatmapCharacteristicName"))
+        diffs = s["_difficultyBeatmaps"]
+        for n, d in zip(_v2_names(diffs), diffs):
+            if n is not None:
+                out[(c, n)] = d.get("_noteJumpStartBeatOffset") or 0
+    for d in info.get("difficultyBeatmaps", []):
+        out[(_characteristic(d.get("characteristic")), d["difficulty"])] = d.get("noteJumpStartBeatOffset") or 0
     return out
 
 
@@ -32,8 +79,48 @@ def standard_beatmaps(info):
                   key=lambda t: difficulty_rank(t[0]))
 
 
+# 密度の窓の数の上限。拍が 1e18 もあるジョーク譜面で、窓ごとの配列がメモリに入らなくなる（MemoryError）のを防ぐ。
+# 2 秒の窓で 23 日ぶんなので、遊べる譜面には効かない
+MAX_WINDOWS = 1_000_000
+
+
+def windows(span, width):
+    """長さ `span` 秒を `width` 秒ずつに分けた窓の数。1 以上、MAX_WINDOWS 以下。"""
+    return min(max(int(span // width), 1), MAX_WINDOWS)
+
+
 def bpm_of(info):
     return info.get("_beatsPerMinute") or info.get("audio", {}).get("bpm") or 120
+
+
+def bpm_regions(mz):
+    """開いた MapZip の v4 の音声のファイルの BPM の区間 -> [(開始の拍, その拍の秒, そこからの bpm)]。v4 でないか、
+    ファイルや区間がなければ None（譜面の BPM の変化と Info.dat の BPM を使う）。ファイルが JSON として読めないときも
+    None で、マップのすべての譜面を失敗にはしない。時間だけが進む区間（拍が進まない）は点を持たず、次の区間の開始の秒が
+    それを含む。"""
+    audio = mz.info.get("audio")
+    fn = audio.get("audioDataFilename") if isinstance(audio, dict) else None
+    if not isinstance(fn, str) or fn.lower() not in mz.names:
+        return None
+    try:
+        data = mz.json(fn)
+    except ValueError:  # 壊れた JSON（UnicodeDecodeError も ValueError）
+        return None
+    freq = data.get("songFrequency") if isinstance(data, dict) else None
+    try:
+        if not isinstance(freq, (int, float)) or not 0 < float(freq) < float("inf"):
+            return None
+    except OverflowError:
+        return None
+    out = []
+    for r in data.get("bpmData") or []:
+        try:  # OverflowError: float() にも入らない大きな整数
+            si, ei, sb, eb = (float(r[k]) for k in ("si", "ei", "sb", "eb"))
+            if eb > sb and ei > si:
+                out.append((sb, si / freq, (eb - sb) * 60 * float(freq) / (ei - si)))
+        except (KeyError, TypeError, ValueError, OverflowError):
+            continue
+    return sorted(out) or None
 
 
 @dataclass
@@ -112,9 +199,12 @@ def _ang(d, offset=0.0):
 
 
 class _Clock:
-    """json の拍 -> BPM の変化 [(beat, bpm)] をたどった秒。"""
+    """json の拍 -> BPM の変化 [(beat, bpm)] をたどった秒。`regions`（bpm_regions）があればそれを使う。"""
 
-    def __init__(self, bpm, changes):
+    def __init__(self, bpm, changes, regions=None):
+        if regions:
+            self.seg = list(regions)
+            return
         pts = sorted((float(b), float(m)) for b, m in changes if m and float(m) > 0)
         self.seg = [(0.0, 0.0, float(bpm))]  # (拍, その拍の秒, そこからの bpm)
         for b, m in pts:
@@ -127,7 +217,8 @@ class _Clock:
         for b0, s0, m0 in reversed(self.seg):
             if beat >= b0:
                 return s0 + (beat - b0) * 60 / m0
-        return beat * 60 / self.seg[0][2]
+        b0, s0, m0 = self.seg[0]  # 最初の点より前: その BPM を前へ延ばす
+        return s0 + (beat - b0) * 60 / m0
 
 
 def _changes(dat):
@@ -153,10 +244,13 @@ def _noodle_xy(o, x, y):
     return x, y
 
 
-def parse(dat, bpm, njs) -> Chart:
-    clock = _Clock(bpm, _changes(dat))
+def parse(dat, bpm, njs, regions=None) -> Chart:
+    """1 つの難易度の .dat。`regions` は v4 の音声のファイルの BPM の区間（bpm_regions）。"""
+    clock = _Clock(bpm, _changes(dat), regions)
     notes, bombs, walls, arcs, chains, tails = [], [], [], 0, 0, {}
-    if "_notes" in dat:  # v2
+    # v3 と v4 は "version" を持つ。v3 のファイルに空の v2 の `_notes` が残っているものがあるので、`_notes` だけでは決めない
+    v2 = "_notes" in dat and not isinstance(dat.get("version"), str) and not dat.get("colorNotes")
+    if v2:
         for n in dat["_notes"]:
             t = n.get("_type")
             if t in (0, 1) and not _fake(n):

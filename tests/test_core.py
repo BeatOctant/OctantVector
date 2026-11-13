@@ -13,7 +13,6 @@ from octantvector.eval import playdata
 from octantvector.generation.archive import MapZip, read_json
 from octantvector.eval import results
 from octantvector.generation.encoders import REGISTRY, Encoder, get, register
-from octantvector.generation.encoders.catalogue_features import NpsNjs
 from octantvector.generation.encoders.chart_patterns import NAMES, pattern_features
 from octantvector.generation.swing.chart import parse
 from octantvector.eval import personal
@@ -39,7 +38,7 @@ def toy_encoders():
 
 
 def test_registry_has_all_encoders():
-    for i in ["npsnjs_std", "chart_patterns", "meta_tags", "swing_flow", "swing_style", "swing_hazards"]:
+    for i in ["chart_patterns", "meta_tags", "swing_flow", "swing_style", "swing_hazards"]:
         e = get(i)
         assert e.id == i and e.dim > 0 and e.kind in ("audio", "zip", "map", "derived") and e.norm in ("center", "zscore")
         json.dumps(e.params())  # store metadata must be serialisable
@@ -304,15 +303,6 @@ def test_index_represents_a_chart_view_by_one_chart_per_map(tmp_path):
     assert len(ix) == 6  # a map-level index, one row per map version
 
 
-def test_npsnjs_fills_missing_difficulties():
-    v = {"diffs": [{"characteristic": "Standard", "difficulty": "Hard", "nps": 3.0, "njs": 14},
-                   {"characteristic": "Standard", "difficulty": "ExpertPlus", "nps": 6.0, "njs": 19}]}
-    x = NpsNjs().embed_map({}, v)
-    assert list(x[:5]) == [3.0, 3.0, 3.0, 3.0, 6.0]  # Expert ties Hard/ExpertPlus; the easier one wins
-    assert list(x[10:]) == [0, 0, 1, 0, 1]
-    assert NpsNjs().embed_map({}, {"diffs": []}) is None
-
-
 def test_kmeans_and_profiles():
     rng = np.random.default_rng(0)
     centers = np.eye(3)
@@ -332,6 +322,10 @@ def test_difficulty_fit():
     pen = fit_penalty([np.array([[5.0, 17]]), np.array([[12.0, 25], [5.0, 17]]), np.array([[12.0, 25]]), np.zeros((0, 2))],
                       lo, hi, sd)
     assert pen[0] == 0 and pen[1] == 0 and pen[2] < pen[0] and pen[3] < 0
+    # a difficulty without a measured NPS is fitted on its NJS alone; a map without difficulties still pays
+    pen = fit_penalty([np.array([[np.nan, 17]]), np.array([[np.nan, 25]]), np.array([[np.nan, 25], [12.0, 17]])],
+                      lo, hi, sd)
+    assert pen[0] == 0 and pen[1] < 0 and pen[2] < 0 and np.isfinite(pen).all()
 
 
 def test_personal_loo_finds_planted_taste(tmp_path):

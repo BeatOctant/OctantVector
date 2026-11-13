@@ -47,7 +47,7 @@ python -m venv .venv
 .venv/bin/pip install "octantvector-wavlm[vocal] @ git+https://github.com/BeatOctant/OctantVectorPlugins#subdirectory=wavlm"
 ```
 
-ボーカルのビュー（`stem = "vocal"`）も計算するなら `".[embed,vocal]"` にします（Demucs で歌声を分離します）。モデルのファイルは OctantVector が取りに行かず、`models_dir`（環境変数 `BV_MODELS_DIR`）の下の `hf/<repo>/<revision>/` から読みます（`octantharvest models` が置きます）。検索と評価だけなら `pip install -e .` でも動きます（torch があれば GPU を使います）。アーカイブとカタログの場所を [設定の文書](https://github.com/BeatOctant/OctantSpecs/blob/main/octantvector/config.md)に従って設定してから、状態を確認します。
+音声のビューを計算するには、`ffmpeg` と `ffprobe` のプログラムが PATH に要ります（曲はすべて ffmpeg で読みます。Linux だけで動きます）。ボーカルのビュー（`stem = "vocal"`）も計算するなら `".[embed,vocal]"` にします（Demucs で歌声を分離します）。モデルのファイルは OctantVector が取りに行かず、`models_dir`（環境変数 `BV_MODELS_DIR`）の下の `hf/<repo>/<revision>/` から読みます（`octantharvest models` が置きます）。検索と評価だけなら `pip install -e .` でも動きます（torch があれば GPU を使います）。アーカイブとカタログの場所を [設定の文書](https://github.com/BeatOctant/OctantSpecs/blob/main/octantvector/config.md)に従って設定してから、状態を確認します。
 
 ```bash
 .venv/bin/octantvector check
@@ -60,7 +60,7 @@ OctantCompass と OctantHarvest は、このリポジトリの最新の版のタ
 更新（カタログとアーカイブを台帳に取り込み、名前を指定したエンコーダで足りない分だけ計算します。再実行すると未計算の分だけ続きから計算します。毎日の実行は OctantHarvest がします）:
 
 ```bash
-.venv/bin/octantvector update clap_htsat_unfused meta_tags chart_patterns npsnjs_std
+.venv/bin/octantvector update clap_htsat_unfused meta_tags chart_patterns chart_timing
 ```
 
 計算する範囲はプールで選びます（`--pool`、既定は全量の `distribution`）。ビューを試すときは、全体から 20,000 件を決まった種で選ぶ `trial` を使います。プールは設定の `[pools.<名前>]` 表で変えたり足したりできます（キーは `min_upvotes`・`standard`・`sample`・`seed`・`include`。`include` は必ず入れるマップの ID かハッシュを 1 行に 1 つ書いたファイルです。`src/octantvector/generation/pools.py`）:

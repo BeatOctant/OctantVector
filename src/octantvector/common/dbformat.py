@@ -4,7 +4,7 @@
 
 ファイルによらない DB の中身:
   maps        {hash: (artist, mapper, duration_s, published_at)}
-  charts      {hash: [(characteristic, difficulty, nps, njs, pass, tech, play_style), ...]}。カタログの順
+  charts      {hash: [(characteristic, difficulty, nps, njs, pass, tech, play_style, njs_play, jd, reaction_s, nps_peak), ...]}。カタログの順
   superseded  {旧い版の hash: 同じマップの現行版の hash}
   views       {"id@version": {"meta": {...}, "vecs": {key: vector}}}。キーは "maps" の行のビューなら版の hash、
               "charts" の行のビューなら譜面のキー（charts.py）。ベクトルは meta の "dtype" の型: float16 か、次元ごとに
@@ -53,7 +53,9 @@ SCHEMA_VERSION = "2.0"  # 2.0: int8 のビュー（meta の "dtype"、"scale"）
 INDEX_VERSION = "1.1"  # 契約5（OctantHarvest to OctantCompass）の索引（indexVersion）
 MAP_COLS = (("artist", "string"), ("mapper", "string"), ("duration_s", "float64"), ("published_at", "string"))
 CHART_COLS = (("characteristic", "string"), ("difficulty", "string"), ("nps", "float64"),
-              ("njs", "float64"), ("pass", "float64"), ("tech", "float64"), ("play_style", "string"))
+              ("njs", "float64"), ("pass", "float64"), ("tech", "float64"), ("play_style", "string"),
+              ("njs_play", "float64"), ("jd", "float64"), ("reaction_s", "float64"),
+              ("nps_peak", "float64"))
 ROW_KINDS = ("maps", "charts")  # ビューの行が指せる表
 FIELDS = ("schemaVersion", "kind", "dbVersion", "builtAt", "baseDbVersion", "diffsSinceFull", "calibrationId",
           "calibrationFile", "counts", "views", "removedViews", "chartMetrics", "presets", "notice", "files")  # 知っているもの
@@ -474,8 +476,9 @@ def unknown(content):
 def _chart_columns(path):
     ch, extra = _columns(path, CHART_COLS)
     missing = [c for c, _ in CHART_COLS if c not in ch]
-    if missing:  # 例 1.0 の DB（play_style がない）: 読まない
-        raise FormatError(f"{path}: no column {', '.join(missing)}")
+    if missing:  # 列が足りない DB（0.14.0 より前に作った DB）は読まない
+        raise FormatError(f"{path}: no column {', '.join(missing)} (a DB built before OctantVector 0.14.0; "
+                          "get a DB built for this version)")
     return ch, extra
 
 

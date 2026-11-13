@@ -21,6 +21,8 @@ from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, ThreadPoolE
 from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 
+import numpy as np
+
 from . import archive, catalogue, config, pools
 from ..common.charts import key_hash
 from .encoders import get, registry
@@ -66,7 +68,10 @@ def _work(task):
                     except Exception as ex:  # 壊れた譜面は、そのエンコーダーだけを失敗させる
                         out[i] = ex
             audio = [i for i in ids if _WORKER["encs"][i].kind == "audio"]
-            data = mz.song_bytes() if audio else None
+            try:
+                data = mz.song_bytes() if audio else None
+            except Exception as ex:  # 曲のファイルのないマップは、音声のエンコーダーだけを失敗させる
+                data = ex
             image = [i for i in ids if _WORKER["encs"][i].kind == "image"]
             try:
                 cover = mz.cover_bytes() if image else None
@@ -82,12 +87,17 @@ def _work(task):
                 out[i] = ex
         if audio:
             try:
+                if isinstance(data, Exception):
+                    raise data
                 y, sr = archive.decode_audio(data)
             except Exception as ex:  # デコードできない曲は、音声のエンコーダーだけを失敗させる
                 out.update((i, ex) for i in audio)
             else:
                 for i in audio:
-                    out[i] = _WORKER["encs"][i].prep(y, sr)
+                    try:
+                        out[i] = _WORKER["encs"][i].prep(y, sr)
+                    except Exception as ex:  # 長い曲で特徴抽出がメモリに入らないなど: その音声のエンコーダーだけを失敗させる
+                        out[i] = ex
         return h, ids, sha, out, None
     except Exception as ex:
         return h, ids, sha, out, repr(ex)
@@ -95,7 +105,8 @@ def _work(task):
 
 def run(cfg, encoder_ids, pool="distribution", n=None, seed=2, retry_errors=False, log=sys.stderr):
     """プール `pool` で `encoder_ids`（と派生のものの元）を計算する。n: プールの無作為な部分（テストと手早い実験）。
-    -> {encoder id: GPU に空きがなく後の実行に残したマップ}（残したエンコーダーだけ）。"""
+    -> {encoder id: 記録せず後の実行に残したマップ}（残したエンコーダーだけ。GPU に空きがなかった、PC のいまの状態の
+    せいで曲を読めなかった: _consume）。"""
     arch, cat = cfg.require("archive"), cfg.require("catalogue")
     if not encoder_ids:
         raise GenerationError("name the views to compute")
@@ -133,6 +144,11 @@ def run(cfg, encoder_ids, pool="distribution", n=None, seed=2, retry_errors=Fals
             for i in mapped:
                 _run_map(led, encs[i], stores[i], pending, plan[i], recs)
         heavy = [i for i in plan if encs[i].kind in MAIN_KINDS + ("zip",) and plan[i]]
+        if any(encs[i].kind == "audio" for i in heavy):  # なければ全曲がエラーとして記録されてしまう
+            try:
+                archive.need_ffmpeg()
+            except ValueError as ex:
+                raise GenerationError(str(ex)) from None
         no_room = _run_heavy(cfg, arch, led, encs, stores, pending, {i: plan[i] for i in heavy}, log) if heavy else {}
         for i in [i for i in encs if encs[i].kind == "derived"]:
             # 派生のビューは元のストアに従う。足したものはほかの結果と同じく記録する
@@ -144,8 +160,8 @@ def run(cfg, encoder_ids, pool="distribution", n=None, seed=2, retry_errors=Fals
             led.adopt(encs[i], stores[i].fingerprint, Store(encs[i], cfg.store).done())
         print("ledger: " + str(led.summary()), file=log)
         if no_room:
-            print("left for a later run, the GPU had no room: " + ", ".join(f"{i} {k}" for i, k in no_room.items()),
-                  file=log)
+            print("left for a later run (the GPU had no room, or the PC could not read the song for now): "
+                  + ", ".join(f"{i} {k}" for i, k in no_room.items()), file=log)
         return no_room
     finally:
         led.close()
@@ -192,7 +208,7 @@ def _run_map(led, enc, store, pending, todo, recs):
 
 
 def _run_heavy(cfg, arch, led, encs, stores, pending, plan, log):
-    """-> {encoder id: GPU に空きのなかったマップ}（_consume）。"""
+    """-> {encoder id: 記録せず後の実行に残したマップ}（_consume）。"""
     heavy = list(plan)
     want = {}
     for i, hs in plan.items():
@@ -202,6 +218,8 @@ def _run_heavy(cfg, arch, led, encs, stores, pending, plan, log):
     tasks = sorted(want.items(), key=lambda t: seq.get(t[0], 0))
     print(f"{len(tasks)} maps to read for {heavy}", file=log)
     device = _device(cfg)
+    if device == "cuda" and any(encs[i].kind in MAIN_KINDS for i in heavy):  # zip だけなら GPU は使わない
+        _reserve_gpu(cfg.gpu_reserve_gb, log)
     for i in heavy:
         if encs[i].kind in MAIN_KINDS:
             encs[i].setup_model(device)
@@ -362,8 +380,9 @@ def _consume(led, encs, stores, results, total, t0, log):
     はデコードを続ける）、どちらも相手を待たない。台帳とストアに書くのはメインのプロセスだけで、結果はまとまりを渡した
     順に記録する。
 
-    GPU に空きがなければ、モデルはもっと小さいまとまりを受け取る（_run_model）。1 つでも入らないマップは記録しないので、
-    次の実行で計算する。-> {encoder id: そういうマップ}（残したエンコーダーだけ）。"""
+    GPU に空きがなければ、モデルはもっと小さいまとまりを受け取る（_run_model）。1 つでも入らないマップと、ワーカーで
+    PC のいまの状態のせいで曲を読めなかったマップ（archive.LeftForLater: 曲を展開する空きメモリがない、ffmpeg が外から止められた）
+    は記録しないので、次の実行で計算する。-> {encoder id: そういうマップ}（残したエンコーダーだけ）。"""
     groups, ahead, no_room = {}, deque(), {}
     sizes = {i: [getattr(e, "batch", 1)] for i, e in encs.items()}  # モデル 1 回の呼び出しのマップ数。_run_model が縮める
     model = ThreadPoolExecutor(1, thread_name_prefix="octantvector-model")
@@ -384,6 +403,9 @@ def _consume(led, encs, stores, results, total, t0, log):
                     fails[i] = ("error", err)
                 elif x is None or (isinstance(x, dict) and not x):
                     fails[i] = ("skip", None)
+                elif isinstance(x, archive.LeftForLater):  # 記録しない: 後の実行で計算する
+                    no_room[i] = no_room.get(i, 0) + 1
+                    print(f"{h}: {i}: {type(x).__name__} ({x}); left for a later run", file=log)
                 elif isinstance(x, Exception):
                     fails[i] = ("error", repr(x))
                 elif encs[i].kind in MAIN_KINDS:
@@ -417,11 +439,15 @@ def _consume(led, encs, stores, results, total, t0, log):
 
 def _embedded(led, enc, store, h, v):
     """1 マップの出力。音声か画像のエンコーダーからの None は、表すものが見つからなかったこと（例 曲に声がない）: skip と
-    して記録する。"""
+    して記録する。有限でない値を持つ音声か画像のベクトルは書かずにエラーにする（ボーカルのビューで 16 秒の曲が NaN の
+    ベクトルになったことがある）: 正規化がそれを 0 に変え、DB に意味のない行が入るため。譜面のビューの NaN と inf は
+    エンコーダーが決めた値（chart_timing）なので、ここでは見ない。"""
     if v is None:
         led.record(enc, store.fingerprint, [(h, "skip", None, None)])
-    else:
-        _add(store, h, v)
+        return
+    if enc.kind in MAIN_KINDS and not np.isfinite(v).all():
+        raise ValueError(f"{enc.id}: the vector has values that are not finite")
+    _add(store, h, v)
 
 
 # 1 つでも GPU に入らなかったマップの出力: 何も記録しないので、後の実行で計算する
@@ -484,6 +510,27 @@ def _record_group(led, encs, stores, no_room, i, group, future):
             _embedded(led, enc, store, h, v)
         except Exception as ex:
             led.record(enc, store.fingerprint, [(h, "error", None, repr(ex))])
+
+
+def _reserve_gpu(reserve_gb, log):
+    """torch がこのプロセスで確保する GPU のメモリを、全体から `reserve_gb` を除いた量までにする。キャッシュも含めて
+    この量を超える確保はメモリ不足になり、_run_model がマップを減らして試し直す。CUDA の文脈（数百 MB）はこの外。
+    0 なら上限なし（このプロセスで前に上限を付けていれば外す）。"""
+    if reserve_gb <= 0:
+        torch = sys.modules.get("torch")
+        if torch is not None and torch.cuda.is_initialized():
+            torch.cuda.set_per_process_memory_fraction(1.0, torch.cuda.current_device())
+        return
+    import torch
+    dev = torch.cuda.current_device()
+    total = torch.cuda.get_device_properties(dev).total_memory
+    cap = total - reserve_gb * 2**30
+    if cap <= 0:
+        raise GenerationError(f"gpu_reserve_gb ({reserve_gb:g}) is not less than the GPU memory "
+                              f"({total / 2**30:.1f} GB)")
+    torch.cuda.set_per_process_memory_fraction(cap / total, dev)
+    print(f"GPU: models use at most {cap / 2**30:.1f} of {total / 2**30:.1f} GB "
+          f"({reserve_gb:g} GB left for other programs)", file=log, flush=True)
 
 
 def _device(cfg):

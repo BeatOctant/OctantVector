@@ -25,6 +25,8 @@ DEFAULTS = {
     "models_dir": None,           # BV_MODELS_DIR: エンコーダーが読むモデルのファイル。<models_dir>/hf/<repo>/<revision>/ の形
                                   # （OctantVector はダウンロードしない）
     "device": "auto",             # BV_DEVICE: "auto"（使えれば CUDA）か "cpu"
+    "gpu_reserve_gb": 4,          # BV_GPU_RESERVE_GB: GPU のメモリのうち、モデルに使わずにほかのプログラム（画面、VR のサーバー）
+                                  # に残す量。torch はこの分を除いた量より多くは確保しない（0: 上限なし）
     "workers": 12,                # BV_WORKERS: 埋め込みに使う CPU のワーカーのプロセス数
     "worker_memory_gb": 6,        # BV_WORKER_MEMORY_GB: 自分の分でこれより多くのメモリを使ったワーカーは止め、そのマップを失敗として
                                   # 記録する（0: 上限なし。Linux だけ）
@@ -79,6 +81,7 @@ class Config:
     store: Path
     models_dir: Path | None
     device: str
+    gpu_reserve_gb: float
     workers: int
     worker_memory_gb: float
     full_every: int
@@ -104,7 +107,8 @@ def load():
             vals[k] = env
     for k in ("workers", "full_every"):
         vals[k] = int(vals[k])
-    vals["worker_memory_gb"] = float(vals["worker_memory_gb"])
+    for k in ("worker_memory_gb", "gpu_reserve_gb"):
+        vals[k] = float(vals[k])
     for k in ("archive", "catalogue", "artists", "store", "models_dir", "swing_model"):
         vals[k] = Path(vals[k]).expanduser() if vals[k] else None
     return Config(**vals)

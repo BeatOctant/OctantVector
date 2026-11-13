@@ -255,7 +255,7 @@ TEXT_COLS = ("hash", "characteristic", "difficulty", "play_style")
 
 
 def _numbers(values):
-    """charts.parquet の列が数を持つ（か何も持たない）なら True: 指標で、知っているもの（nps、njs、pass、tech）か、
+    """charts.parquet の列が数を持つ（か何も持たない）なら True: 指標で、知っているもの（nps、njs、pass、tech と、測った列 njs_play、jd、reaction_s、nps_peak）か、
     新しい DB が足したもの（ほかの列はそのまま運ぶ、dbformat.py）。"""
     return all(v is None or (isinstance(v, (int, float)) and not isinstance(v, bool)) for v in values)
 

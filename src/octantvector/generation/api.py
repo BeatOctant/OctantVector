@@ -127,8 +127,8 @@ def compute(input, store, views, params=None, pool="distribution", models_dir=No
     """クロールを台帳に取り込み、`views`（と派生のものの元、譜面の指標の元のビュー: dbrelease.METRICS）について、台帳が
     足りないと言うものを、プール `pool`（params["pools"]、OctantSpecs octantvector/config.md）で計算する。models_dir:
     `models(views)` が挙げるモデルを持つフォルダ。続きからやり直せ、直後にもう一度呼べば何も計算しない。GPU に空きが
-    なければ、モデルは一度に扱うマップを減らす。1 つでも入らないマップは計算も記録もせず残し（"deferred"）、次の
-    呼び出しで計算する。
+    なければ、モデルは一度に扱うマップを減らす。1 つでも入らないマップと、PC のいまの状態のせいで曲を読めなかった
+    マップ（空きメモリがない、ffmpeg が外から止められた）は計算も記録もせず残し（"deferred"）、次の呼び出しで計算する。
     -> この呼び出しの {"computed": n, "failed": n, "skipped": n, "deferred": n,
         "views": {id@version: {"ok"|"error"|"skip"|"deferred": n}}}。"""
     ids = _ids(views)

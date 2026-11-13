@@ -35,7 +35,7 @@ from .recommend import RequestError
 # 決めるため。英語の言い回しは推測。
 DEFAULT_PRESETS = [
     {"id": "all", "group": {"en": "Song & map", "ja": "曲と譜面"}, "label": {"en": "All", "ja": "すべて"},
-     "hint": {"en": "Close to the selected map in every way", "ja": "選んでいる譜面に近いものを、どの軸でも"},
+     "hint": {"en": "Similar to the selected map overall", "ja": "選んでいる譜面に近いものを、どの軸でも"},
      "inputs": [{"kind": "seed"}], "handling": "near", "knobs": {}},
 ]
 

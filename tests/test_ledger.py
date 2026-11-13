@@ -4,10 +4,11 @@ import io
 import json
 import zipfile
 
+import numpy as np
 import pytest
 
 from octantvector.generation import GenerationError, config, embed, pools
-from octantvector.generation.encoders import get
+from octantvector.generation.encoders import REGISTRY, Encoder, get
 from octantvector.generation.ledger import Ledger
 from octantvector.generation.store import Store
 
@@ -137,18 +138,30 @@ def test_sample_is_stable_and_include_adds_maps(tmp_path):
         pools.members({**pools.KEYS, "include": str(tmp_path / "missing.txt")}, eligible, current)
 
 
-def test_update_computes_only_what_is_missing(tmp_path, cfg):
+class _PerMap(Encoder):
+    """A map view that reads only the catalogue diffs: a changed tag or upvote count leaves it alone."""
+    id = "chart_per_map"
+    dim = 1
+    role = "chart"
+    inputs = ("meta:versions.diffs",)
+
+    def embed_map(self, m, v):
+        return np.array([len(v["diffs"])], np.float32)
+
+
+def test_update_computes_only_what_is_missing(tmp_path, cfg, monkeypatch):
+    monkeypatch.setitem(REGISTRY, _PerMap.id, _PerMap)
     maps = [mapr(f"k{i}", [version(H(i))]) for i in range(1, 6)] + [mapr("low", [version(H(9))], up=5)]
     zips = [H(i) for i in range(1, 6)] + [H(9)]
     write_world(tmp_path, maps, zips)
     write_zip(tmp_path / "archive", H(4), notes=NOTES[:3])  # too few notes: chart_patterns skips it
     write_zip(tmp_path / "archive", H(5), raw=b"not a zip")  # unreadable
-    ids = ["chart_patterns", "meta_tags", "npsnjs_std"]
+    ids = ["chart_patterns", "meta_tags", _PerMap.id]
 
     log = update(cfg, ids, pool="popular")
     assert planned(log, "chart_patterns") == 5 and planned(log, "meta_tags") == 5  # pool "popular": up >= 100
     led = Ledger(tmp_path / "store" / "ledger.sqlite")
-    res = dict(led.db.execute("SELECT hash, result FROM computed WHERE encoder='chart_patterns@3'"))
+    res = dict(led.db.execute("SELECT hash, result FROM computed WHERE encoder='chart_patterns@4'"))
     assert res == {H(1): "ok", H(2): "ok", H(3): "ok", H(4): "skip", H(5): "error"}  # results per map version
     assert Store(get("chart_patterns"), tmp_path / "store").done() == {f"{H(i)}:Standard:Expert" for i in (1, 2, 3)}
     assert led.db.execute("SELECT zip_sha256 IS NOT NULL FROM versions WHERE hash=?", (H(1),)).fetchone()[0]
@@ -161,20 +174,21 @@ def test_update_computes_only_what_is_missing(tmp_path, cfg):
     maps[1]["stats"]["upvotes"] = 300  # not an input of any view
     write_world(tmp_path, maps, zips)
     log = update(cfg, ids, pool="popular")
-    assert planned(log, "meta_tags") == 1 and planned(log, "npsnjs_std") == 0 and planned(log, "chart_patterns") == 0
+    assert planned(log, "meta_tags") == 1 and planned(log, _PerMap.id) == 0 and planned(log, "chart_patterns") == 0
 
     log = update(cfg, ["chart_patterns"], pool="popular", retry_errors=True)
     assert planned(log, "chart_patterns") == 1
 
 
-def test_update_adopts_vectors_computed_before_the_ledger(tmp_path, cfg):
+def test_update_adopts_vectors_computed_before_the_ledger(tmp_path, cfg, monkeypatch):
+    monkeypatch.setitem(REGISTRY, _PerMap.id, _PerMap)
     maps = [mapr(f"k{i}", [version(H(i))]) for i in range(1, 4)]
     write_world(tmp_path, maps, [H(i) for i in range(1, 4)])
-    s = Store(get("npsnjs_std"), tmp_path / "store")
-    s.add(H(1), get("npsnjs_std").embed_map(maps[0], maps[0]["versions"][0]))
+    s = Store(get(_PerMap.id), tmp_path / "store")
+    s.add(H(1), get(_PerMap.id).embed_map(maps[0], maps[0]["versions"][0]))
     s.flush()
-    log = update(cfg, ["npsnjs_std"])
-    assert "1 vectors already in the store" in log and planned(log, "npsnjs_std") == 2
+    log = update(cfg, [_PerMap.id])
+    assert "1 vectors already in the store" in log and planned(log, _PerMap.id) == 2
 
 
 def test_update_rejects_a_changed_zip(tmp_path, cfg):

@@ -15,6 +15,7 @@
 譜面のこともある）。移したものはすべて報告する。DB が知らないマップの出来事は入れずに数える。
 """
 from dataclasses import dataclass, field
+from datetime import timedelta
 
 from ..common import charts as chartids
 from . import likes
@@ -49,6 +50,16 @@ class History:
         """目標（まだクリアしていないマップのお気に入りか Upvote、法 4.1）。ただし、プレイヤーが削除したマップは、ほかの
         既知のマップと同じく外したまま。推測: 法 4.1 は削除したマップを出にくくするとだけ書き、どれだけかは書いていない。"""
         return {h for h, s in self.counts.items() if likes.classify(s) == "goal" and not s["deleted"]}
+
+    def revisit(self, days, today):
+        """「久しぶり」の候補: 好意のマップ（法 4.1）のうち、最後のプレイ（途中終了も数える）の日が `today`（UTC の日付）の
+        `days` 日前か、それより前のもの。プレイの記録がない好意のマップ（OctantPath を入れる前のプレイだけ）は前に遊んだ
+        ものとして入れる。削除したマップは入れない。"""
+        last = {}
+        for pl in self.plays:
+            last[pl.hash] = max(last.get(pl.hash, ""), pl.at[:10])
+        cutoff = (today - timedelta(days=days)).isoformat()
+        return {h for h in self.liked() if not self.counts[h]["deleted"] and last.get(h, "") <= cutoff}
 
 
 def _plain(e):

@@ -4,4 +4,4 @@ octantvector/encoders.md。"""
 from .base import (REGISTRY, AudioEncoder, Encoder, ImageEncoder, Model, get, load_plugins, register,  # noqa: F401
                    registry)
 from .audio import ClipAudioEncoder, HiddenMean  # noqa: F401
-from . import chart_patterns, catalogue_features, swing  # noqa: F401,E402
+from . import chart_patterns, chart_timing, catalogue_features, swing  # noqa: F401,E402

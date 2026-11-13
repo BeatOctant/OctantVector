@@ -325,6 +325,11 @@ class AudioEncoder(Encoder):
     inputs = ("audio",)
     sr = None
 
+    def definition(self):
+        """曲の読み方（archive.SONG_READER）も入れる: 読み方を変えたら版を上げないとストアが開かない。"""
+        from .. import archive
+        return {**super().definition(), "song_reader": archive.SONG_READER}
+
     def setup_worker(self):  # CPU の側の物（特徴抽出器）。ワーカーのプロセスごとに一度
         pass
 

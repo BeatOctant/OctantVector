@@ -13,6 +13,21 @@ def _meta(cfg):
     return load_meta(cfg.require("catalogue"), cfg.store / "meta.json")
 
 
+def _with_max_nps(cfg, md, log=sys.stderr):
+    """-> (NPS を読んだビューの id@version, 表示用のメタデータに、Standard の譜面の測った NPS の最大（`maxnps`。測った値が
+    なければ None）を足したもの)。"""
+    from .common import charts
+    from .generation.dbrelease import chart_metric
+    view, nps = chart_metric(cfg.store, "nps")
+    best = {}
+    for k, v in nps.items():
+        h, c, _ = charts.split(k)
+        if charts.play_style(c) == charts.STANDARD:
+            best[h] = max(best.get(h, v), v)
+    print(f"max NPS ({view}): {sum(h in best for h in md)} of {len(md)} maps", file=log)
+    return view, {h: {**m, "maxnps": best.get(h)} for h, m in md.items()}
+
+
 def cmd_check(cfg, a):
     from .common.dbformat import sha256
     from .generation.encoders import registry
@@ -161,10 +176,12 @@ def cmd_eval_neighbours(cfg, a):
         from .eval.neighbours import isolation
         ref = ix if a.views == a.isolation_view else _index(cfg, Namespace(**{**vars(a), "views": a.isolation_view}))
         iso = isolation(ref, a.k)
-    res = evaluate(ix, _meta(cfg), a.k, csls=a.csls, rows=rows, isolation_of=iso)
+    nps_view, md = _with_max_nps(cfg, _meta(cfg))
+    res = evaluate(ix, md, a.k, csls=a.csls, rows=rows, isolation_of=iso)
     print(json.dumps(res, indent=1))
     if a.out:
-        settings = {"k": a.k, "csls": a.csls, **({"isolation_view": a.isolation_view} if a.isolation_view else {})}
+        settings = {"k": a.k, "csls": a.csls, "nps_view": nps_view,
+                    **({"isolation_view": a.isolation_view} if a.isolation_view else {})}
         results.write(a.out, results.run_info(ix, "eval-neighbours", res, **settings), rows)
         print(f"wrote {a.out}: {len(rows)} queries", file=sys.stderr)
 
@@ -188,6 +205,40 @@ def cmd_playdata(cfg, a):
     print(f"wrote {a.out}: {len(sig)} maps with signals, {len(plays)} play records")
 
 
+def _difficulty_points(measured, recs, cand, plays, md, log=sys.stderr):
+    """eval personal の難易度合わせの入力。measured: chart_metric(store, "nps") の (ビュー, {譜面のキー: nps})。
+    -> (ビュー, {候補の hash: Standard の難易度ごとの (nps, njs) の (n, 2) 配列}, 最後まで遊んだプレイの [(key, nps, njs)])。
+    NPS は譜面のファイルから測った値（カタログの nps は負になる譜面がある）、njs はカタログの値。測った NPS のない難易度
+    （計算していない、zip がない、色ノーツがない）は nps を NaN にして残す（fit_penalty はその次元を数えない）。
+    測った NPS のないプレイは幅に入れない。"""
+    from .common import charts
+    from .generation import catalogue
+    view, nps = measured
+
+    def point(h, d):
+        return nps.get(charts.key(h, charts.STANDARD, d["difficulty"]), np.nan), d["njs"]
+
+    diffs = {h: np.array([point(h, d) for d in catalogue.standard_diffs(recs[h][1])], np.float64).reshape(-1, 2)
+             for h in cand if h in recs}
+    pts, n_finished = [], 0
+    for p in plays:
+        if p["outcome"] == "finished" and p["mode"] == "SoloStandard" and p["speed"] == 1.0 and p["hash"] in recs:
+            d = {x["difficulty"]: x for x in catalogue.standard_diffs(recs[p["hash"]][1])}.get(p["diff"])
+            if d:
+                n_finished += 1
+                q = point(p["hash"], d)
+                if np.isfinite(q[0]):
+                    pts.append((md.get(p["hash"], {}).get("key"), *q))
+    if not pts:
+        raise GenerationError(f"none of the {n_finished} finished plays has a measured NPS in {view}; "
+                              "the difficulty fit needs them")
+    n = sum(len(D) for D in diffs.values())
+    got = sum(int(np.isfinite(D[:, 0]).sum()) for D in diffs.values())
+    print(f"NPS ({view}): {got} of {n} Standard difficulties of the candidates, "
+          f"{len(pts)} of {n_finished} finished plays", file=log)
+    return view, diffs, pts
+
+
 def cmd_eval_personal(cfg, a):
     from .generation import catalogue
     from .eval import personal
@@ -200,16 +251,11 @@ def cmd_eval_personal(cfg, a):
     lab = personal.labels(merged)
     cand = sorted(lab)
     liked = [h for h in cand if lab[h]]
-    diffs, pts = None, None
+    diffs, pts, nps_view = None, None, None
     if a.beta:
-        recs = catalogue.records_for(cfg.require("catalogue"), set(cand) | {p["hash"] for p in data["plays"]})
-        diffs = {h: np.array([[d["nps"], d["njs"]] for d in catalogue.standard_diffs(recs[h][1])]) for h in cand if h in recs}
-        pts = []
-        for p in data["plays"]:
-            if p["outcome"] == "finished" and p["mode"] == "SoloStandard" and p["speed"] == 1.0 and p["hash"] in recs:
-                d = {x["difficulty"]: x for x in catalogue.standard_diffs(recs[p["hash"]][1])}.get(p["diff"])
-                if d:
-                    pts.append((md.get(p["hash"], {}).get("key"), d["nps"], d["njs"]))
+        from .generation.dbrelease import chart_metric
+        nps_view, diffs, pts = _difficulty_points(chart_metric(cfg.store, "nps"), catalogue.records_for(
+            cfg.require("catalogue"), set(cand) | {p["hash"] for p in data["plays"]}), cand, data["plays"], md)
     res = personal.run(ix, cand, liked, kind=a.profile, csls=not a.no_csls, beta=a.beta, difficulties=diffs,
                        finished_points=pts, csls_density=a.csls_density, key_of={h: md[h]["key"] for h in cand},
                        keep_ranks=bool(a.out))
@@ -218,7 +264,7 @@ def cmd_eval_personal(cfg, a):
     if a.out:
         from .eval import results
         info = results.run_info(ix, "eval-personal", res, profile=a.profile, beta=a.beta, csls=not a.no_csls,
-                                csls_density=a.csls_density)
+                                csls_density=a.csls_density, **({"nps_view": nps_view} if nps_view else {}))
         results.write(a.out, info, [{"query": h, "rank": r} for h, r in ranks.items()])
         print(f"wrote {a.out}: ranks of {len(ranks)} liked maps", file=sys.stderr)
 

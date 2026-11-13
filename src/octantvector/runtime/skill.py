@@ -1,7 +1,9 @@
 """得意な譜面からの距離としてのプレイヤーの実力（OctantSpecs 法 3.3）。
 
 プレイスタイルごとに（プレイスタイルの違う譜面どうしは比べない、憲法の原則 2）:
-  features   charts.parquet の譜面の特徴。DB のそのプレイスタイルの譜面で標準化する
+  features   charts.parquet の譜面の特徴。DB のそのプレイスタイルの譜面の中央値を引き、四分位範囲で割る（特徴ごとに
+             有限の値から。平均と標準偏差では、ごく少数の極端な値（NJS 3.4e38 など）で尺度が決まり、ふつうの譜面の
+             差が潰れる: OctantSpecs open.md F11）。極端な値は FAR に留め、距離が有限のまま遠くにあるようにする
   strong set 得意な譜面の枠: 直近の素のクリア（速度 1.0、修飾なし。途中終了は数えない）、続いて空きがあるあいだ、
              OctantPath の前にクリアしたと PlayerData が言う譜面（`cleared` のある imported_play）をプレイの多い順に:
              PlayerData には日付がなく、そのクリアには修飾があったかもしれない。枠が埋まると、自分の新しいクリアが
@@ -19,6 +21,7 @@ warmup = その一部、challenge = 曲線が挑戦のクリアの見込みを�
 """
 import numpy as np
 
+FAR = 1e6  # 標準化した特徴の上限（四分位範囲の単位）。どの許容幅よりも遠く、2 乗しても有限
 RIDGE = 1.0  # 苦手な方向の当てはめの L2 の罰: 1 つの方向だけでクリアと失敗が分かれるときも有限に保つ。どこまで信じるかは、
              # その標準誤差と directionShrinkPlays が決める（Style.learn）
 
@@ -42,7 +45,7 @@ class Style:
         """得意な譜面どうしの距離とその広がり（目標の単位）。一から計算する。"""
         self._all = None
         self.self_d = np.array([self._dist(self.X[self.pos[r]], exclude=r) for r in self.strong])
-        self.sd = float(self.self_d.std()) or 1.0
+        self.sd = spread(self.self_d)
 
     def _to_strong(self, x, exclude=None):
         """-> (`exclude` を除いた得意な譜面の行, 特徴 x からそれぞれへの距離)。"""
@@ -152,6 +155,32 @@ class Style:
         return "normal", normal
 
 
+def spread(d):
+    """得意な譜面どうしの距離の広がり（許容幅の単位）: 四分位範囲を正規分布の標準偏差に揃えたもの（/ 1.349）。得意な
+    譜面に極端なものが 1 つ入っても開かない。四分位範囲が 0 なら標準偏差、それも 0 なら 1。"""
+    d = d[np.isfinite(d)]
+    if not len(d):
+        return 1.0
+    q1, q3 = np.percentile(d, [25, 75])
+    return float(q3 - q1) / 1.349 or float(d.std()) or 1.0
+
+
+def standardise(raw):
+    """各列から中央値を引き、四分位範囲で割り、±FAR に留めたもの。四分位範囲が 0 なら標準偏差、それも 0 なら 1 で割る
+    （spread と同じ。同じ値が多い列、例えば NJS の列だけが素の単位になって距離を支配しないように）。統計は列ごとに
+    有限の値から取る。有限でない値はそのまま（その譜面は距離を持たない）。"""
+    X = np.array(raw, np.float64)
+    for f in range(X.shape[1]):
+        v = X[:, f][np.isfinite(X[:, f])]
+        if not len(v):
+            continue
+        q1, med, q3 = np.percentile(v, [25, 50, 75])
+        X[:, f] = (X[:, f] - med) / (float(q3 - q1) or float(v.std()) or 1.0)
+    fin = np.isfinite(X)
+    X[fin] = np.clip(X[fin], -FAR, FAR)
+    return X
+
+
 def _logistic(x, y, ridge=0.0, iters=50, noise=False):
     """ニュートン法によるロジスティック回帰。P(y) = 1 / (1 + exp(-(a + x b)))。列 x は 1 つでも複数でもよく、b に L2 の
     罰 `ridge` をかける。-> (a, *b)。収束しなければ None。`noise` があれば ((a, *b), 当てはめた点での罰付きのヘッセ
@@ -186,11 +215,9 @@ def estimate(db, hist, p):
     for style in sorted(set(db.play_styles)):
         rows = np.flatnonzero(styles == style)
         X = raw[rows]
-        ok = np.isfinite(X).all(1)
-        if ok.sum() < 2:
+        if np.isfinite(X).all(1).sum() < 2:
             continue
-        mu, sd = X[ok].mean(0), X[ok].std(0)
-        X = (X - mu) / np.where(sd > 0, sd, 1)
+        X = standardise(X)
         mine = [pl for pl in plain if db.play_styles[db.chart_pos[pl.chart]] == style]
         # 枠が埋まったら、直近のプレイは得意な譜面の枠の一番古いクリアから始まる。それまではどのプレイも直近
         clears, strong, since = [pl for pl in mine if pl.result == "clear"], [], ""

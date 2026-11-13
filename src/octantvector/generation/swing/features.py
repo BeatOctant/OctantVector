@@ -8,7 +8,7 @@ from dataclasses import replace
 
 import numpy as np
 
-from .chart import Chart
+from .chart import Chart, windows
 from . import hazards
 from .simulate import angdiff, simulate_all
 
@@ -82,7 +82,7 @@ def chart_features(chart: Chart, P):
 
     # 速さ
     f["sps"] = len(both) / span
-    win = np.histogram(t, bins=max(int(span // 2), 1))[0] / 2.0
+    win = np.histogram(t, bins=windows(span, 2))[0] / 2.0
     f["sps_p90"] = _p(win, 90)
     ebpm = np.array([60.0 / (2 * s.dt) for s in sw])
     f["ebpm_median"], f["ebpm_p90"] = _p(ebpm, 50), _p(ebpm, 90)

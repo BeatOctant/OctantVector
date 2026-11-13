@@ -37,12 +37,13 @@ def difficulty_band(points, lo_pct=10, hi_pct=90):
 
 def fit_penalty(difficulties, lo, hi, sd):
     """difficulties: マップごとの (n_diff, 2) の (nps, njs) 配列。-> マップごとに、難易度のうち一番よい（一番負でない）
-    罰 -0.5 * sum((幅の外の距離 / sd)^2)。0 ならどれかの難易度が範囲内。"""
+    罰 -0.5 * sum((幅の外の距離 / sd)^2)。0 ならどれかの難易度が範囲内。NaN の値（測った NPS のない難易度）はその次元を
+    罰に数えない（ほかの次元だけで合わせる）。難易度が 1 つもないマップは -2。"""
     out = np.empty(len(difficulties))
     for i, D in enumerate(difficulties):
         if len(D) == 0:
             out[i] = -2.0
             continue
-        z = np.maximum(0, np.maximum(lo - D, D - hi)) / sd
+        z = np.nan_to_num(np.maximum(0, np.maximum(lo - D, D - hi)) / sd, nan=0.0)
         out[i] = (-0.5 * (z ** 2).sum(1)).max()
     return out
